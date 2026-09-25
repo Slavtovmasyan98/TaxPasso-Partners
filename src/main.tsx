@@ -193,20 +193,24 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
       if (error) setMsg(error.message);
       else if (data.user) onAuth(data.user);
     } else {
+      // Заявку нельзя сохранить до подтверждения email (ещё нет сессии),
+      // поэтому данные кладём в профиль аккаунта, а заявка создаётся при первом входе.
       const { data, error } = await sb.auth.signUp({
         email: email.trim().toLowerCase(), password,
-        options: { emailRedirectTo: location.origin },
+        options: {
+          emailRedirectTo: location.origin,
+          data: {
+            partner_full_name: name.trim(),
+            partner_qualification: qual,
+            partner_bio: bio.trim() || null,
+          },
+        },
       });
       if (error) setMsg(error.message);
+      else if (data.session && data.user) onAuth(data.user);
       else {
-        if (data.user) {
-          await sb.from("partner_applications").insert({
-            user_id: data.user.id, full_name: name.trim(),
-            qualification: qual, bio: bio.trim() || null,
-          });
-        }
         setOk(true);
-        setMsg("Проверьте email для подтверждения. После входа заявка будет рассмотрена администратором.");
+        setMsg("Проверьте email и подтвердите регистрацию. После первого входа заявка уйдёт администратору.");
       }
     }
     setBusy(false);
@@ -242,7 +246,51 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
 }
 
 // ─── Pending ──────────────────────────────────────────────────────────────────
-function PendingScreen({ app }: { app: PartnerApp|null }) {
+function ApplyForm({ userId, onDone }: { userId: string; onDone: () => void }) {
+  const [name, setName] = useState("");
+  const [qual, setQual] = useState("CAA");
+  const [bio, setBio] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  async function send() {
+    setBusy(true); setErr("");
+    const { error } = await sb.from("partner_applications").insert({
+      user_id: userId, full_name: name.trim(), qualification: qual, bio: bio.trim() || null,
+    });
+    if (error) setErr(error.message); else onDone();
+    setBusy(false);
+  }
+  return (
+    <div style={{ textAlign: "left", marginTop: 20 }}>
+      <input className="partner-select" placeholder="ФИО *" value={name} onChange={e=>setName(e.target.value)} style={{ marginBottom: 10 }}/>
+      <select className="partner-select" value={qual} onChange={e=>setQual(e.target.value)} style={{ marginBottom: 10 }}>
+        <option>CAA</option><option>CPA</option><option>CAA/CPA</option>
+      </select>
+      <textarea className="note-area" placeholder="Коротко о себе (необязательно)" value={bio} onChange={e=>setBio(e.target.value)}/>
+      <button className="btn btn-primary btn-full" style={{ marginTop: 10 }} disabled={busy || name.trim().length < 2} onClick={send}>
+        {busy ? "Отправка…" : "Отправить заявку"}
+      </button>
+      {err && <p className="error-msg">{err}</p>}
+    </div>
+  );
+}
+
+function PendingScreen({ app, userId, onApplied }: { app: PartnerApp|null; userId?: string; onApplied?: () => void }) {
+  if (!app && userId && onApplied) {
+    return (
+      <div className="full-page">
+        <div className="pending-card">
+          <ShieldCheck size={40} color="#4762c9"/>
+          <h1>Заявка партнёра</h1>
+          <p>Расскажите о себе, и администратор рассмотрит заявку.</p>
+          <ApplyForm userId={userId} onDone={onApplied}/>
+          <button className="btn btn-outline" style={{ marginTop: 16 }} onClick={()=>sb.auth.signOut()}>
+            <LogOut size={16}/> Выйти
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="full-page">
       <div className="pending-card">
@@ -302,13 +350,25 @@ function App() {
   async function bootstrap() {
     setLoading(true);
     const { data: prof } = await sb.from("profiles").select("role").eq("id", user!.id).single();
-    const r = (prof?.role as Role)||"";
+    // Кабинет доступен только ролям admin и partner; все остальные (в т.ч. client) — на экран заявки.
+    const raw = prof?.role;
+    const r: Role = raw === "admin" || raw === "partner" ? raw : "";
     setRole(r);
     if (r==="admin"||r==="partner") {
       await loadOrders();
       if (r==="admin") { await loadPartners(); await loadApplications(); }
     } else {
-      const { data: papp } = await sb.from("partner_applications").select("*").eq("user_id", user!.id).single();
+      let { data: papp } = await sb.from("partner_applications").select("*").eq("user_id", user!.id).maybeSingle();
+      const meta = user!.user_metadata || {};
+      if (!papp && meta.partner_full_name) {
+        await sb.from("partner_applications").insert({
+          user_id: user!.id,
+          full_name: String(meta.partner_full_name),
+          qualification: ["CAA","CPA","CAA/CPA"].includes(meta.partner_qualification) ? meta.partner_qualification : "CAA",
+          bio: meta.partner_bio ? String(meta.partner_bio) : null,
+        });
+        ({ data: papp } = await sb.from("partner_applications").select("*").eq("user_id", user!.id).maybeSingle());
+      }
       setApp(papp);
     }
     setLoading(false);
@@ -403,7 +463,7 @@ function App() {
 
   if (loading) return <div className="full-page"><p style={{color:"#667085"}}>Загрузка…</p></div>;
   if (!user) return <LoginScreen onAuth={u=>setUser(u)}/>;
-  if (!role) return <PendingScreen app={app}/>;
+  if (!role) return <PendingScreen app={app} userId={user.id} onApplied={bootstrap}/>;
   if (app?.status==="rejected") return <PendingScreen app={app}/>;
 
   const pendingApps = applications.filter(a=>a.status==="pending");
