@@ -35,7 +35,7 @@ type PartnerDoc = {
 };
 type ClientDoc = {
   id: string; order_id: string; name: string; path: string;
-  mime_type: string; size_bytes: number;
+  mime_type: string; size_bytes: number; created_at: string;
   review_status: string; review_comment?: string | null;
 };
 
@@ -283,7 +283,7 @@ function App() {
 
   if (loading) return <div className="full-page"><p>Загрузка…</p></div>;
   if (!user) return <LoginScreen onAuth={u => setUser(u)} />;
-  if (!role || role === "") return <PendingScreen app={app} />;
+  if (!role) return <PendingScreen app={app} />;
   if (app?.status === "rejected") return <PendingScreen app={app} />;
 
   // ─── Render ─────────────────────────────────────────────────────────────────
