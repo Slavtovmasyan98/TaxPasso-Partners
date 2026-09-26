@@ -31,8 +31,9 @@ type Partner = { id: string; profile_id: string; display_name: string; qualifica
 type PartnerDoc = {
   id: string; order_id: string; name: string; path: string;
   mime_type: string; size_bytes: number; visibility: string;
-  note?: string | null; created_at: string;
+  note?: string | null; created_at: string; doc_type?: string;
 };
+type Company = { order_id: string; name: string; state: string; ein: string | null; registered_on: string | null };
 type ClientDoc = {
   id: string; order_id: string; name: string; path: string;
   mime_type: string; size_bytes: number; created_at: string;
@@ -55,6 +56,10 @@ const PROD: Record<string,string> = {
   llc_wy:"LLC Wyoming", llc_de:"LLC Delaware",
   itin_standard:"ITIN Standard", itin_return:"ITIN + 1040-NR",
   bundle_wy:"Bundle WY", bundle_de:"Bundle DE",
+};
+const DOC_TYPES: Record<string,string> = {
+  articles:"Articles of Organization", ein_letter:"Письмо EIN (IRS)",
+  operating_agreement:"Operating Agreement", other:"Другой документ",
 };
 const STEP_HINTS: Record<string,string> = {
   review:"Проверить анкету клиента и загруженные документы",
@@ -332,6 +337,11 @@ function App() {
   const [rejectNote, setRejectNote] = useState("");
   const [partnerNote, setPartnerNote] = useState("");
   const [selectedPartner, setSelectedPartner] = useState("");
+  const [docType, setDocType] = useState("articles");
+  const [company, setCompany] = useState<Company|null>(null);
+  const [coName, setCoName] = useState("");
+  const [coEin, setCoEin] = useState("");
+  const [coDate, setCoDate] = useState("");
   const [confirm, setConfirm] = useState<Confirm|null>(null);
   const { toasts, add: toast } = useToasts();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -356,7 +366,8 @@ function App() {
     setRole(r);
     if (r==="admin"||r==="partner") {
       await loadOrders();
-      if (r==="admin") { await loadPartners(); await loadApplications(); }
+      await loadPartners();
+      if (r==="admin") await loadApplications();
     } else {
       let { data: papp } = await sb.from("partner_applications").select("*").eq("user_id", user!.id).maybeSingle();
       const meta = user!.user_metadata || {};
@@ -394,11 +405,19 @@ function App() {
     ]);
     setClientDocs(c.data||[]);
     setPartnerDocs(p.data||[]);
+    const { data: co } = await sb.from("companies").select("*").eq("order_id",orderId).maybeSingle();
+    setCompany(co||null);
   }
 
   useEffect(() => {
-    if (selected) { loadDocs(selected.id); setRejectNote(""); setPartnerNote(""); }
+    if (selected) {
+      loadDocs(selected.id); setRejectNote(""); setPartnerNote("");
+      setCoName(selected.applicant?.company||""); setCoEin(""); setCoDate("");
+    }
   }, [selected?.id]);
+  useEffect(() => {
+    if (company) { setCoName(company.name); setCoEin(company.ein||""); setCoDate(company.registered_on||""); }
+  }, [company?.order_id, company?.ein, company?.registered_on]);
 
   async function rpc(fn: string, args: Record<string,unknown>, successMsg: string) {
     setBusy(true);
@@ -407,6 +426,10 @@ function App() {
       toast("error", error.message==="Payment required" ? "Сначала нужна оплата" :
         error.message==="Eligibility approval required" ? "Сначала подтвердите основание ITIN" :
         error.message==="Admin only" ? "Только для администратора" :
+        error.message==="Company EIN required" ? "Сначала внесите EIN в «Данные компании»" :
+        error.message==="Final documents required" ? "Передайте клиенту Articles, письмо EIN и Operating Agreement" :
+        error.message==="EIN format must be 12-3456789" ? "EIN в формате 12-3456789" :
+        error.message==="Invalid registration date" ? "Укажите дату регистрации (не в будущем)" :
         error.message||"Не удалось выполнить действие");
     } else {
       toast("success", successMsg);
@@ -431,20 +454,23 @@ function App() {
 
   async function uploadPartnerDoc(file: File) {
     if (!selected||!user) return;
+    const myPartner = partners.find(p => p.profile_id===user.id);
+    if (!myPartner) { toast("error", "Профиль партнёра не найден. Обратитесь к администратору."); return; }
+    if (!["application/pdf","image/jpeg","image/png"].includes(file.type) || file.size > 10*1024*1024) {
+      toast("error", "Только PDF, JPG или PNG до 10 МБ"); return;
+    }
     setBusy(true);
     const ext = file.name.split(".").pop();
     const path = `${selected.id}/${crypto.randomUUID()}.${ext}`;
     const { error: upErr } = await sb.storage.from("documents").upload(path, file, { contentType: file.type, upsert: false });
     if (upErr) { toast("error", upErr.message); setBusy(false); return; }
-    const myPartner = partners.find(p => p.profile_id===user.id);
-    if (!myPartner) { toast("error", "Профиль партнёра не найден"); setBusy(false); return; }
     const { error: dbErr } = await sb.from("partner_documents").insert({
       order_id: selected.id, partner_id: myPartner.id, uploaded_by: user.id,
       path, name: file.name, mime_type: file.type, size_bytes: file.size,
-      note: partnerNote.trim()||null,
+      note: partnerNote.trim()||null, doc_type: docType,
     });
     if (dbErr) toast("error", dbErr.message);
-    else { toast("success", "Документ загружен"); await loadDocs(selected.id); setPartnerNote(""); }
+    else { toast("success", `Загружено: ${DOC_TYPES[docType]}. Теперь нажмите «Отправить».`); await loadDocs(selected.id); setPartnerNote(""); }
     setBusy(false);
   }
 
@@ -736,6 +762,54 @@ function App() {
                   </div>
                 </div>
 
+                {/* Company + delivery checklist (LLC) */}
+                {!selected.product.startsWith("itin")&&(()=>{
+                  const pub = new Set(partnerDocs.filter(d=>d.visibility==="published").map(d=>d.doc_type));
+                  const checks = [
+                    { ok: !!company?.ein, label: "EIN внесён в данные компании" },
+                    { ok: pub.has("articles"), label: "Articles of Organization переданы клиенту" },
+                    { ok: pub.has("ein_letter"), label: "Письмо EIN передано клиенту" },
+                    { ok: pub.has("operating_agreement"), label: "Operating Agreement передан клиенту" },
+                  ];
+                  const showCompany = ["registered","ein_requested","ein_received"].includes(selected.status);
+                  return (
+                    <div className="grid-2">
+                      <div className="card">
+                        <h2>Данные компании</h2>
+                        {!showCompany ? (
+                          <p style={{color:"#94a3b8",fontSize:13}}>Заполняется после регистрации в штате (этап «Компания зарегистрирована»).</p>
+                        ) : (
+                          <>
+                            <label className="eyebrow" style={{display:"block",marginBottom:4}}>Название</label>
+                            <input className="partner-select" value={coName} onChange={e=>setCoName(e.target.value)} style={{marginBottom:10}}/>
+                            <label className="eyebrow" style={{display:"block",marginBottom:4}}>EIN</label>
+                            <input className="partner-select" placeholder="12-3456789" value={coEin} onChange={e=>setCoEin(e.target.value)} style={{marginBottom:10}}/>
+                            <label className="eyebrow" style={{display:"block",marginBottom:4}}>Дата регистрации в штате</label>
+                            <input className="partner-select" type="date" value={coDate} onChange={e=>setCoDate(e.target.value)} style={{marginBottom:12}}/>
+                            <button className="btn btn-primary btn-full" disabled={busy||!coName.trim()||!coDate}
+                              onClick={()=>rpc("record_company",{p_order:selected.id,p_name:coName,p_ein:coEin||null,p_registered_on:coDate},"Данные компании сохранены, сроки добавлены клиенту")}>
+                              <Check size={15}/> Сохранить
+                            </button>
+                            {company&&<p style={{fontSize:12,color:"#667085",marginTop:8}}>Клиент видит карточку компании и календарь сроков.</p>}
+                          </>
+                        )}
+                      </div>
+                      <div className="card">
+                        <h2>Выдача клиенту</h2>
+                        {checks.map(c=>(
+                          <div key={c.label} className="history-row">
+                            <span style={{color:c.ok?"#15803d":"#667085"}}>
+                              {c.ok?<CheckCircle2 size={14} style={{verticalAlign:-2,marginRight:6}}/>:<Clock size={14} style={{verticalAlign:-2,marginRight:6}}/>}
+                              {c.label}
+                            </span>
+                          </div>
+                        ))}
+                        <p style={{fontSize:12,color:"#667085",marginTop:10}}>Этап «EIN получен» откроется, когда все пункты выполнены.</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Client docs */}
                 <div className="card" style={{marginBottom:18}}>
                   <h2>Документы клиента</h2>
@@ -782,7 +856,7 @@ function App() {
                       <FileText size={18} color="#4762c9"/>
                       <div style={{flex:1}}>
                         <div className="doc-name">{d.name}</div>
-                        <div className="doc-meta">{fmtBytes(d.size_bytes)} · {fmt(d.created_at)}</div>
+                        <div className="doc-meta"><b>{DOC_TYPES[d.doc_type||"other"]}</b> · {fmtBytes(d.size_bytes)} · {fmt(d.created_at)}</div>
                         {d.note&&<div className="doc-meta" style={{color:"#a32828"}}>Замечание: {d.note}</div>}
                       </div>
                       <span className={`badge ${d.visibility==="published"?"doc-published":d.visibility==="admin_review"?"doc-review":"status"}`}>
@@ -833,6 +907,9 @@ function App() {
                   {role==="partner"&&(
                     <>
                       <div className="section-title" style={{marginTop:16}}>ЗАГРУЗИТЬ ДОКУМЕНТ</div>
+                      <select className="partner-select" value={docType} onChange={e=>setDocType(e.target.value)} style={{marginBottom:8}}>
+                        {Object.entries(DOC_TYPES).map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                      </select>
                       <textarea className="note-area" placeholder="Комментарий к документу (необязательно)"
                         value={partnerNote} onChange={e=>setPartnerNote(e.target.value)}/>
                       <label className="upload-zone" style={{marginTop:10}}>
