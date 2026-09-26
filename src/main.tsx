@@ -21,7 +21,9 @@ type Order = {
   payment_status: string; payment_note?: string | null; payment_marked_manually?: boolean;
   applicant: Record<string, string>; created_at: string; partner_id?: string | null;
   order_status_history?: { status: string; created_at: string }[];
+  service_years?: number; closed_at?: string | null; service_until?: string | null;
 };
+type Proposal = { order_id: string; stream: "main"|"itin"; proposed_status: string; proposed_at: string };
 type PartnerApp = {
   id: string; user_id: string; full_name: string; qualification: string;
   bio?: string | null; status: "pending" | "approved" | "rejected";
@@ -33,7 +35,7 @@ type PartnerDoc = {
   mime_type: string; size_bytes: number; visibility: string;
   note?: string | null; created_at: string; doc_type?: string;
 };
-type Company = { order_id: string; name: string; state: string; ein: string | null; registered_on: string | null };
+type Company = { order_id: string; name: string; state: string; ein: string | null; registered_on: string | null; approved?: boolean };
 type ClientDoc = {
   id: string; order_id: string; name: string; path: string;
   mime_type: string; size_bytes: number; created_at: string;
@@ -324,7 +326,10 @@ function App() {
   const [role, setRole] = useState<Role>("");
   const [app, setApp] = useState<PartnerApp|null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"orders"|"applications">("orders");
+  const [tab, setTab] = useState<"orders"|"operations"|"applications">("orders");
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [showClosed, setShowClosed] = useState(false);
+  const [allCompanies, setAllCompanies] = useState<Company[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selected, setSelected] = useState<Order|null>(null);
   const [updatedId, setUpdatedId] = useState<string|null>(null);
@@ -386,6 +391,11 @@ function App() {
   }
 
   async function loadOrders() {
+    const [{ data: pr }, { data: cos }] = await Promise.all([
+      sb.from("status_proposals").select("*"),
+      sb.from("companies").select("*"),
+    ]);
+    setProposals(pr||[]); setAllCompanies(cos||[]);
     const { data } = await sb.from("orders").select("*,order_status_history(*)").order("created_at",{ascending:false});
     setOrders(data||[]);
     if (data&&data.length>0) setSelected(s => s ? (data.find(o=>o.id===s.id)||data[0]) : data[0]);
@@ -426,7 +436,10 @@ function App() {
       toast("error", error.message==="Payment required" ? "Сначала нужна оплата" :
         error.message==="Eligibility approval required" ? "Сначала подтвердите основание ITIN" :
         error.message==="Admin only" ? "Только для администратора" :
-        error.message==="Company EIN required" ? "Сначала внесите EIN в «Данные компании»" :
+        error.message==="Waiting for partner" ? "Сначала партнёр должен отметить этап выполненным" :
+        error.message==="Proposal outdated" ? "Предложение устарело, обновите страницу" :
+        error.message==="Order closed" ? "Заказ закрыт" :
+        error.message==="Company EIN required" ? "Нужны EIN и одобрение данных компании администратором" :
         error.message==="Final documents required" ? "Передайте клиенту Articles, письмо EIN и Operating Agreement" :
         error.message==="EIN format must be 12-3456789" ? "EIN в формате 12-3456789" :
         error.message==="Invalid registration date" ? "Укажите дату регистрации (не в будущем)" :
@@ -474,7 +487,7 @@ function App() {
     setBusy(false);
   }
 
-  const filtered = orders.filter(o =>
+  const filtered = orders.filter(o => showClosed ? !!o.closed_at : !o.closed_at).filter(o =>
     (o.applicant?.company||o.applicant?.name||o.product).toLowerCase().includes(query.toLowerCase())
   );
 
@@ -506,6 +519,9 @@ function App() {
             <div className="nav-tabs">
               <button className={tab==="orders"?"active":""} onClick={()=>setTab("orders")}>
                 <ClipboardList size={14} style={{marginRight:5,verticalAlign:-2}}/> Заказы
+              </button>
+              <button className={tab==="operations"?"active":""} onClick={()=>setTab("operations")}>
+                <ShieldCheck size={14} style={{marginRight:5,verticalAlign:-2}}/> Operations
               </button>
               <button className={tab==="applications"?"active":""} onClick={()=>setTab("applications")}>
                 <Users size={14} style={{marginRight:5,verticalAlign:-2}}/> Заявки
@@ -565,6 +581,36 @@ function App() {
         </div>
       )}
 
+      {/* ─── Operations tab (admin) ────────────────────────────────── */}
+      {tab==="operations"&&role==="admin"&&(()=>{
+        const ops = orders.filter(o=>o.closed_at&&!o.product.startsWith("itin"))
+          .sort((a,b)=>(a.service_until||"").localeCompare(b.service_until||""));
+        return (
+          <div className="app-list">
+            {ops.length===0&&<div className="empty-state"><ShieldCheck size={40}/><h2>Нет компаний на обслуживании</h2><p>Закрытые заказы LLC появятся здесь.</p></div>}
+            {ops.map(o=>{
+              const co = allCompanies.find(c=>c.order_id===o.id);
+              const days = o.service_until ? Math.round((new Date(o.service_until+"T12:00:00").getTime()-Date.now())/86400000) : null;
+              return (
+                <div className="app-card" key={o.id}>
+                  <div className="app-info">
+                    <h3>{co?.name||o.applicant?.company||"Компания"}</h3>
+                    <p>{co?.state==="DE"?"Delaware":"Wyoming"} · EIN {co?.ein||"—"} · пакет {o.service_years||1} {(o.service_years||1)===1?"год":"года"}</p>
+                    <p>Обслуживание до {o.service_until?new Date(o.service_until+"T12:00:00").toLocaleDateString("ru-RU"):"—"}</p>
+                  </div>
+                  {days!==null&&(
+                    <span className={`badge ${days<0?"pending-el":days<=60?"unpaid":"approved-el"}`}>
+                      {days<0?`Истёк ${-days} дн. назад`:days<=60?`Продление через ${days} дн.`:`Активно · ${days} дн.`}
+                    </span>
+                  )}
+                  <button className="btn btn-outline btn-sm" onClick={()=>{ setSelected(o); setShowClosed(true); setTab("orders"); }}>Открыть</button>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
       {/* ─── Orders tab ────────────────────────────────────────────── */}
       {tab==="orders"&&(
         <div className="workspace">
@@ -578,6 +624,10 @@ function App() {
                 </button>
               </div>
             </div>
+            <div className="login-tabs" style={{marginBottom:10}}>
+              <button className={!showClosed?"active":""} onClick={()=>setShowClosed(false)}>В работе</button>
+              <button className={showClosed?"active":""} onClick={()=>setShowClosed(true)}>Закрытые</button>
+            </div>
             <div className="search-box">
               <Search size={15} color="#94a3b8"/>
               <input placeholder="Поиск…" value={query} onChange={e=>setQuery(e.target.value)}/>
@@ -590,6 +640,10 @@ function App() {
                 <strong>{o.applicant?.company||o.applicant?.name||"Без названия"}</strong>
                 <small>{PROD[o.product]||o.product} · {STATUS[o.status]||o.status}</small>
                 <div className="badges">
+                  {o.closed_at&&<span className="badge approved-el">Закрыт</span>}
+                  {proposals.some(p=>p.order_id===o.id)&&(
+                    <span className="badge doc-review">{role==="admin"?"Ждёт вашего подтверждения":"На подтверждении у admin"}</span>
+                  )}
                   <span className={`badge ${o.payment_status==="paid"?"paid":"unpaid"}`}>
                     {o.payment_status==="paid"?"Оплачено":"Ожидает оплаты"}
                   </span>
@@ -658,26 +712,83 @@ function App() {
                   <div className="card">
                     <h2>Действия</h2>
 
-                    {/* Следующий шаг */}
-                    {selected.payment_status==="paid"&&(()=>{
-                      const next = getNextStep(selected);
-                      return next?(
-                        <div className="action-section">
-                          <div className="action-label">СЛЕДУЮЩИЙ ЭТАП</div>
-                          <button className="next-step-btn" disabled={busy}
-                            onClick={()=>setConfirm({
-                              title:`Перевести в «${next.label}»?`,
-                              body: STEP_HINTS[next.status]||"Подтвердите переход на следующий этап.",
-                              confirmLabel:"Перевести",
-                              onConfirm:()=>rpc("advance_order",{p_order:selected.id,p_status:next.status},`Статус → ${next.label}`)
-                            })}>
-                            <span>{next.label}</span>
-                            <span className="step-arrow"><ArrowRight size={13}/></span>
-                          </button>
-                          {STEP_HINTS[next.status]&&<div className="step-hint">{STEP_HINTS[next.status]}</div>}
+                    {/* Этапы: партнёр предлагает → admin подтверждает */}
+                    {selected.closed_at&&(
+                      <div className="action-section">
+                        <div className="assigned-chip" style={{background:"#f0fdf4",color:"#15803d"}}>
+                          <CheckCircle2 size={14}/> Заказ закрыт {fmt(selected.closed_at)}
+                          {selected.service_until&&<span style={{color:"#667085",marginLeft:4}}>· обслуживание до {new Date(selected.service_until+"T12:00:00").toLocaleDateString("ru-RU")}</span>}
                         </div>
-                      ):null;
-                    })()}
+                      </div>
+                    )}
+                    {!selected.closed_at&&selected.payment_status==="paid"&&(["main","itin"] as const)
+                      .filter(stream=>stream==="main"||(selected.product.startsWith("bundle")&&!!selected.itin_status))
+                      .map(stream=>{
+                        const cur = stream==="itin" ? selected.itin_status||"" : selected.status;
+                        const ch = stream==="itin" ? ITIN_CHAIN : chain(selected.product);
+                        const idx = ch.indexOf(cur);
+                        if (idx<0||idx>=ch.length-1) return null;
+                        const next = ch[idx+1]; const label = STATUS[next]||next;
+                        const prop = proposals.find(p=>p.order_id===selected.id&&p.stream===stream);
+                        const noPartner = !selected.partner_id;
+                        return (
+                          <div className="action-section" key={stream}>
+                            <div className="action-label">{stream==="itin"?"СЛЕДУЮЩИЙ ЭТАП ITIN":"СЛЕДУЮЩИЙ ЭТАП"}</div>
+                            {role==="partner"&&(prop ? (
+                              <div className="alert info" style={{margin:0}}><Clock size={15}/> «{label}» — на подтверждении у администратора</div>
+                            ) : (
+                              <button className="next-step-btn" disabled={busy}
+                                onClick={()=>setConfirm({
+                                  title:`Этап «${label}» выполнен?`,
+                                  body:(STEP_HINTS[next]||"")+" Администратор проверит и подтвердит — только после этого клиент увидит новый статус.",
+                                  confirmLabel:"Отправить на подтверждение",
+                                  onConfirm:()=>rpc("propose_status",{p_order:selected.id,p_stream:stream},`«${label}» отправлено администратору`)
+                                })}>
+                                <span>{label}</span><span className="step-arrow"><ArrowRight size={13}/></span>
+                              </button>
+                            ))}
+                            {role==="admin"&&(
+                              <>
+                                <button className="next-step-btn" disabled={busy||(!prop&&!noPartner)}
+                                  onClick={()=>setConfirm({
+                                    title:`Подтвердить «${label}»?`,
+                                    body:"Клиент сразу увидит новый статус в своём кабинете.",
+                                    confirmLabel:"Подтвердить",
+                                    onConfirm:()=>rpc("confirm_status",{p_order:selected.id,p_stream:stream},`Статус → ${label}`)
+                                  })}>
+                                  <span>{prop?`Подтвердить: ${label}`:noPartner?`Перевести: ${label}`:`Ждём партнёра: ${label}`}</span>
+                                  <span className="step-arrow"><ArrowRight size={13}/></span>
+                                </button>
+                                <div className="step-hint">
+                                  {prop ? `Партнёр отметил этап выполненным ${fmt(prop.proposed_at)}.`
+                                    : noPartner ? "Партнёр не назначен — можно перевести самостоятельно."
+                                    : "Кнопка станет активной, когда партнёр отметит этап выполненным."}
+                                </div>
+                                {prop&&(
+                                  <button className="btn btn-danger btn-sm" style={{marginTop:8}} disabled={busy}
+                                    onClick={()=>setConfirm({
+                                      title:"Вернуть этап партнёру?",
+                                      body:"Предложение будет отменено, партнёр сможет отправить его снова.",
+                                      confirmLabel:"Вернуть",danger:true,
+                                      onConfirm:()=>rpc("reject_status_proposal",{p_order:selected.id,p_stream:stream},"Этап возвращён партнёру")
+                                    })}>↩ Вернуть партнёру</button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                    {/* Срок пакета (admin) */}
+                    {role==="admin"&&!selected.product.startsWith("itin")&&(
+                      <div className="action-section">
+                        <div className="action-label">СРОК ОБСЛУЖИВАНИЯ</div>
+                        <select className="partner-select" value={selected.service_years||1} disabled={busy}
+                          onChange={e=>rpc("set_service_years",{p_order:selected.id,p_years:Number(e.target.value)},"Срок пакета обновлён")}>
+                          {[1,2,3,4,5].map(y=><option key={y} value={y}>{y} {y===1?"год":y<5?"года":"лет"}</option>)}
+                        </select>
+                      </div>
+                    )}
 
                     {/* Оплата */}
                     {role==="admin"&&selected.payment_status!=="paid"&&(
@@ -766,7 +877,7 @@ function App() {
                 {!selected.product.startsWith("itin")&&(()=>{
                   const pub = new Set(partnerDocs.filter(d=>d.visibility==="published").map(d=>d.doc_type));
                   const checks = [
-                    { ok: !!company?.ein, label: "EIN внесён в данные компании" },
+                    { ok: !!company?.ein&&!!company?.approved, label: "EIN внесён и одобрен администратором" },
                     { ok: pub.has("articles"), label: "Articles of Organization переданы клиенту" },
                     { ok: pub.has("ein_letter"), label: "Письмо EIN передано клиенту" },
                     { ok: pub.has("operating_agreement"), label: "Operating Agreement передан клиенту" },
@@ -787,10 +898,24 @@ function App() {
                             <label className="eyebrow" style={{display:"block",marginBottom:4}}>Дата регистрации в штате</label>
                             <input className="partner-select" type="date" value={coDate} onChange={e=>setCoDate(e.target.value)} style={{marginBottom:12}}/>
                             <button className="btn btn-primary btn-full" disabled={busy||!coName.trim()||!coDate}
-                              onClick={()=>rpc("record_company",{p_order:selected.id,p_name:coName,p_ein:coEin||null,p_registered_on:coDate},"Данные компании сохранены, сроки добавлены клиенту")}>
+                              onClick={()=>rpc("record_company",{p_order:selected.id,p_name:coName,p_ein:coEin||null,p_registered_on:coDate},role==="admin"?"Данные компании сохранены и видны клиенту":"Данные отправлены администратору на одобрение")}>
                               <Check size={15}/> Сохранить
                             </button>
-                            {company&&<p style={{fontSize:12,color:"#667085",marginTop:8}}>Клиент видит карточку компании и календарь сроков.</p>}
+                            {company&&!company.approved&&(
+                              <div className="alert warn" style={{marginTop:10,marginBottom:0}}>
+                                <Clock size={15}/> {role==="admin"?"Данные внесены партнёром и ждут вашего одобрения. Клиент их пока не видит.":"Ожидает одобрения администратора. Клиент пока не видит данные."}
+                              </div>
+                            )}
+                            {company&&!company.approved&&role==="admin"&&(
+                              <button className="btn btn-success btn-full" style={{marginTop:8}} disabled={busy}
+                                onClick={()=>setConfirm({
+                                  title:"Одобрить данные компании?",
+                                  body:`Клиент увидит: ${company.name}, EIN ${company.ein||"—"}, и календарь сроков.`,
+                                  confirmLabel:"Одобрить",
+                                  onConfirm:()=>rpc("approve_company",{p_order:selected.id},"Данные компании одобрены")
+                                })}><CheckCircle2 size={15}/> Одобрить данные</button>
+                            )}
+                            {company?.approved&&<p style={{fontSize:12,color:"#15803d",marginTop:8}}>✓ Одобрено. Клиент видит карточку компании и календарь сроков.</p>}
                           </>
                         )}
                       </div>
