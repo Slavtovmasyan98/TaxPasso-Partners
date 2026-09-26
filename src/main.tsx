@@ -362,6 +362,16 @@ function App() {
 
   useEffect(() => { if (user) bootstrap(); else setLoading(false); }, [user]);
 
+  // Автообновление: партнёр и админ работают одновременно — подтягиваем свежие статусы
+  // каждые 15 секунд и при возвращении на вкладку, чтобы кнопки сразу становились активными.
+  useEffect(() => {
+    if (role!=="admin"&&role!=="partner") return;
+    const tick = () => { if (document.visibilityState==="visible") loadOrders(); };
+    const id = window.setInterval(tick, 15000);
+    document.addEventListener("visibilitychange", tick);
+    return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", tick); };
+  }, [role]);
+
   async function bootstrap() {
     setLoading(true);
     const { data: prof } = await sb.from("profiles").select("role").eq("id", user!.id).single();
@@ -436,7 +446,9 @@ function App() {
       toast("error", error.message==="Payment required" ? "Сначала нужна оплата" :
         error.message==="Eligibility approval required" ? "Сначала подтвердите основание ITIN" :
         error.message==="Admin only" ? "Только для администратора" :
-        error.message==="Waiting for partner" ? "Сначала партнёр должен отметить этап выполненным" :
+        error.message==="Waiting for partner" ? "Партнёр ещё не дошёл до этого этапа" :
+        error.message==="Partner EIN required" ? "Сначала внесите EIN в «Данные компании»" :
+        error.message==="Partner documents required" ? "Загрузите и отправьте Articles, письмо EIN и Operating Agreement" :
         error.message==="Proposal outdated" ? "Предложение устарело, обновите страницу" :
         error.message==="Order closed" ? "Заказ закрыт" :
         error.message==="Company EIN required" ? "Нужны EIN и одобрение данных компании администратором" :
@@ -487,6 +499,13 @@ function App() {
     setBusy(false);
   }
 
+  // Партнёр видит свой прогресс (status_proposals), админ и клиент — подтверждённый статус.
+  const viewOrder = (o: Order): Order => {
+    if (role!=="partner") return o;
+    const pm = proposals.find(p=>p.order_id===o.id&&p.stream==="main");
+    const pi = proposals.find(p=>p.order_id===o.id&&p.stream==="itin");
+    return { ...o, status: pm?.proposed_status||o.status, itin_status: pi?.proposed_status||o.itin_status };
+  };
   const filtered = orders.filter(o => showClosed ? !!o.closed_at : !o.closed_at).filter(o =>
     (o.applicant?.company||o.applicant?.name||o.product).toLowerCase().includes(query.toLowerCase())
   );
@@ -638,11 +657,11 @@ function App() {
                 className={`order-item ${selected?.id===o.id?"active":""} ${updatedId===o.id?"updated":""}`}
                 onClick={()=>setSelected(o)}>
                 <strong>{o.applicant?.company||o.applicant?.name||"Без названия"}</strong>
-                <small>{PROD[o.product]||o.product} · {STATUS[o.status]||o.status}</small>
+                <small>{PROD[o.product]||o.product} · {STATUS[viewOrder(o).status]||o.status}</small>
                 <div className="badges">
                   {o.closed_at&&<span className="badge approved-el">Закрыт</span>}
-                  {proposals.some(p=>p.order_id===o.id)&&(
-                    <span className="badge doc-review">{role==="admin"?"Ждёт вашего подтверждения":"На подтверждении у admin"}</span>
+                  {role==="admin"&&proposals.some(p=>p.order_id===o.id)&&(
+                    <span className="badge doc-review">Ждёт вашего подтверждения</span>
                   )}
                   <span className={`badge ${o.payment_status==="paid"?"paid":"unpaid"}`}>
                     {o.payment_status==="paid"?"Оплачено":"Ожидает оплаты"}
@@ -675,11 +694,11 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <span className="status-pill">{STATUS[selected.status]||selected.status}</span>
+                  <span className="status-pill">{STATUS[viewOrder(selected).status]||selected.status}</span>
                 </div>
 
                 {/* Status tracker */}
-                <StatusTracker order={selected}/>
+                <StatusTracker order={viewOrder(selected)}/>
 
                 {/* Alerts */}
                 {selected.payment_status!=="paid"&&(
@@ -724,53 +743,56 @@ function App() {
                     {!selected.closed_at&&selected.payment_status==="paid"&&(["main","itin"] as const)
                       .filter(stream=>stream==="main"||(selected.product.startsWith("bundle")&&!!selected.itin_status))
                       .map(stream=>{
-                        const cur = stream==="itin" ? selected.itin_status||"" : selected.status;
+                        const prop = proposals.find(p=>p.order_id===selected.id&&p.stream===stream);
+                        const clientCur = stream==="itin" ? selected.itin_status||"" : selected.status;
+                        const cur = role==="partner" ? (prop?.proposed_status||clientCur) : clientCur;
                         const ch = stream==="itin" ? ITIN_CHAIN : chain(selected.product);
                         const idx = ch.indexOf(cur);
                         if (idx<0||idx>=ch.length-1) return null;
                         const next = ch[idx+1]; const label = STATUS[next]||next;
-                        const prop = proposals.find(p=>p.order_id===selected.id&&p.stream===stream);
+                        const partnerAhead = !!prop && prop.proposed_status!==clientCur;
                         const noPartner = !selected.partner_id;
                         return (
                           <div className="action-section" key={stream}>
                             <div className="action-label">{stream==="itin"?"СЛЕДУЮЩИЙ ЭТАП ITIN":"СЛЕДУЮЩИЙ ЭТАП"}</div>
-                            {role==="partner"&&(prop ? (
-                              <div className="alert info" style={{margin:0}}><Clock size={15}/> «{label}» — на подтверждении у администратора</div>
-                            ) : (
-                              <button className="next-step-btn" disabled={busy}
-                                onClick={()=>setConfirm({
-                                  title:`Этап «${label}» выполнен?`,
-                                  body:(STEP_HINTS[next]||"")+" Администратор проверит и подтвердит — только после этого клиент увидит новый статус.",
-                                  confirmLabel:"Отправить на подтверждение",
-                                  onConfirm:()=>rpc("propose_status",{p_order:selected.id,p_stream:stream},`«${label}» отправлено администратору`)
-                                })}>
-                                <span>{label}</span><span className="step-arrow"><ArrowRight size={13}/></span>
-                              </button>
-                            ))}
+                            {role==="partner"&&(
+                              <>
+                                <button className="next-step-btn" disabled={busy}
+                                  onClick={()=>setConfirm({
+                                    title:`Перевести в «${label}»?`,
+                                    body: STEP_HINTS[next]||"Подтвердите переход на следующий этап.",
+                                    confirmLabel:"Перевести",
+                                    onConfirm:()=>rpc("propose_status",{p_order:selected.id,p_stream:stream},`Статус → ${label}`)
+                                  })}>
+                                  <span>{label}</span><span className="step-arrow"><ArrowRight size={13}/></span>
+                                </button>
+                                {STEP_HINTS[next]&&<div className="step-hint">{STEP_HINTS[next]}</div>}
+                              </>
+                            )}
                             {role==="admin"&&(
                               <>
-                                <button className="next-step-btn" disabled={busy||(!prop&&!noPartner)}
+                                <button className="next-step-btn" disabled={busy||(!partnerAhead&&!noPartner)}
                                   onClick={()=>setConfirm({
-                                    title:`Подтвердить «${label}»?`,
+                                    title:`Уведомить клиента: «${label}»?`,
                                     body:"Клиент сразу увидит новый статус в своём кабинете.",
                                     confirmLabel:"Подтвердить",
-                                    onConfirm:()=>rpc("confirm_status",{p_order:selected.id,p_stream:stream},`Статус → ${label}`)
+                                    onConfirm:()=>rpc("confirm_status",{p_order:selected.id,p_stream:stream},`Клиент видит: ${label}`)
                                   })}>
-                                  <span>{prop?`Подтвердить: ${label}`:noPartner?`Перевести: ${label}`:`Ждём партнёра: ${label}`}</span>
+                                  <span>{partnerAhead||noPartner?`Подтвердить: ${label}`:`Ждём партнёра: ${label}`}</span>
                                   <span className="step-arrow"><ArrowRight size={13}/></span>
                                 </button>
                                 <div className="step-hint">
-                                  {prop ? `Партнёр отметил этап выполненным ${fmt(prop.proposed_at)}.`
-                                    : noPartner ? "Партнёр не назначен — можно перевести самостоятельно."
-                                    : "Кнопка станет активной, когда партнёр отметит этап выполненным."}
+                                  {partnerAhead ? `Партнёр на этапе «${STATUS[prop!.proposed_status]||prop!.proposed_status}» · клиент видит «${STATUS[clientCur]||clientCur}».`
+                                    : noPartner ? "Партнёр не назначен — можно переводить самостоятельно."
+                                    : "Кнопка станет активной, когда партнёр перейдёт на этот этап."}
                                 </div>
-                                {prop&&(
+                                {partnerAhead&&(
                                   <button className="btn btn-danger btn-sm" style={{marginTop:8}} disabled={busy}
                                     onClick={()=>setConfirm({
-                                      title:"Вернуть этап партнёру?",
-                                      body:"Предложение будет отменено, партнёр сможет отправить его снова.",
+                                      title:"Вернуть партнёра к текущему этапу клиента?",
+                                      body:`Прогресс партнёра откатится до «${STATUS[clientCur]||clientCur}».`,
                                       confirmLabel:"Вернуть",danger:true,
-                                      onConfirm:()=>rpc("reject_status_proposal",{p_order:selected.id,p_stream:stream},"Этап возвращён партнёру")
+                                      onConfirm:()=>rpc("reject_status_proposal",{p_order:selected.id,p_stream:stream},"Прогресс партнёра возвращён")
                                     })}>↩ Вернуть партнёру</button>
                                 )}
                               </>
@@ -875,12 +897,14 @@ function App() {
 
                 {/* Company + delivery checklist (LLC) */}
                 {!selected.product.startsWith("itin")&&(()=>{
-                  const pub = new Set(partnerDocs.filter(d=>d.visibility==="published").map(d=>d.doc_type));
+                  const isAdmin = role==="admin";
+                  const pub = new Set(partnerDocs.filter(d=>isAdmin?d.visibility==="published":d.visibility!=="partner_only").map(d=>d.doc_type));
+                  const verb = isAdmin?"передан клиенту":"отправлен";
                   const checks = [
-                    { ok: !!company?.ein&&!!company?.approved, label: "EIN внесён и одобрен администратором" },
-                    { ok: pub.has("articles"), label: "Articles of Organization переданы клиенту" },
-                    { ok: pub.has("ein_letter"), label: "Письмо EIN передано клиенту" },
-                    { ok: pub.has("operating_agreement"), label: "Operating Agreement передан клиенту" },
+                    { ok: isAdmin?(!!company?.ein&&!!company?.approved):!!company?.ein, label: isAdmin?"EIN одобрен (видит клиент)":"EIN внесён" },
+                    { ok: pub.has("articles"), label: `Articles of Organization ${verb}` },
+                    { ok: pub.has("ein_letter"), label: `Письмо EIN ${verb}` },
+                    { ok: pub.has("operating_agreement"), label: `Operating Agreement ${verb}` },
                   ];
                   const showCompany = ["registered","ein_requested","ein_received"].includes(selected.status);
                   return (
@@ -898,14 +922,15 @@ function App() {
                             <label className="eyebrow" style={{display:"block",marginBottom:4}}>Дата регистрации в штате</label>
                             <input className="partner-select" type="date" value={coDate} onChange={e=>setCoDate(e.target.value)} style={{marginBottom:12}}/>
                             <button className="btn btn-primary btn-full" disabled={busy||!coName.trim()||!coDate}
-                              onClick={()=>rpc("record_company",{p_order:selected.id,p_name:coName,p_ein:coEin||null,p_registered_on:coDate},role==="admin"?"Данные компании сохранены и видны клиенту":"Данные отправлены администратору на одобрение")}>
+                              onClick={()=>rpc("record_company",{p_order:selected.id,p_name:coName,p_ein:coEin||null,p_registered_on:coDate},role==="admin"?"Данные компании сохранены и видны клиенту":"Данные компании сохранены")}>
                               <Check size={15}/> Сохранить
                             </button>
-                            {company&&!company.approved&&(
+                            {company&&!company.approved&&role==="admin"&&(
                               <div className="alert warn" style={{marginTop:10,marginBottom:0}}>
-                                <Clock size={15}/> {role==="admin"?"Данные внесены партнёром и ждут вашего одобрения. Клиент их пока не видит.":"Ожидает одобрения администратора. Клиент пока не видит данные."}
+                                <Clock size={15}/> Данные внесены партнёром и ждут вашего одобрения. Клиент их пока не видит.
                               </div>
                             )}
+                            {company&&role==="partner"&&<p style={{fontSize:12,color:"#15803d",marginTop:8}}>✓ Сохранено</p>}
                             {company&&!company.approved&&role==="admin"&&(
                               <button className="btn btn-success btn-full" style={{marginTop:8}} disabled={busy}
                                 onClick={()=>setConfirm({
@@ -915,12 +940,12 @@ function App() {
                                   onConfirm:()=>rpc("approve_company",{p_order:selected.id},"Данные компании одобрены")
                                 })}><CheckCircle2 size={15}/> Одобрить данные</button>
                             )}
-                            {company?.approved&&<p style={{fontSize:12,color:"#15803d",marginTop:8}}>✓ Одобрено. Клиент видит карточку компании и календарь сроков.</p>}
+                            {company?.approved&&role==="admin"&&<p style={{fontSize:12,color:"#15803d",marginTop:8}}>✓ Одобрено. Клиент видит карточку компании и календарь сроков.</p>}
                           </>
                         )}
                       </div>
                       <div className="card">
-                        <h2>Выдача клиенту</h2>
+                        <h2>{isAdmin?"Выдача клиенту":"Финальные документы"}</h2>
                         {checks.map(c=>(
                           <div key={c.label} className="history-row">
                             <span style={{color:c.ok?"#15803d":"#667085"}}>
