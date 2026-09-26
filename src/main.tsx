@@ -22,7 +22,11 @@ type Order = {
   applicant: Record<string, string>; created_at: string; partner_id?: string | null;
   order_status_history?: { status: string; created_at: string }[];
   service_years?: number; closed_at?: string | null; service_until?: string | null;
+  cancelled_at?: string | null; cancel_reason?: string | null;
 };
+type Milestone = { order_id: string; milestone: string; recorded_at: string; partner_id?: string | null };
+type Refund = { id: string; order_id: string; amount_cents: number; scope: string; reason: string; created_at: string };
+type AuditRow = { id: number; at: string; actor_role?: string | null; entity: string; action: string; old_value?: Record<string, unknown> | null; new_value?: Record<string, unknown> | null; reason?: string | null };
 type Proposal = { order_id: string; stream: "main"|"itin"; proposed_status: string; proposed_at: string };
 type PartnerApp = {
   id: string; user_id: string; full_name: string; qualification: string;
@@ -253,6 +257,79 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
 }
 
 // ─── Pending ──────────────────────────────────────────────────────────────────
+// ─── Двухфакторная защита (TOTP) ─────────────────────────────────────────────
+function MfaChallenge({ onDone }: { onDone: () => void }) {
+  const [code, setCode] = useState(""); const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
+  async function verify() {
+    setBusy(true); setErr("");
+    const { data: f } = await sb.auth.mfa.listFactors();
+    const factor = f?.totp?.[0];
+    if (!factor) { setErr("Аутентификатор не найден"); setBusy(false); return; }
+    const { error } = await sb.auth.mfa.challengeAndVerify({ factorId: factor.id, code: code.trim() });
+    if (error) setErr("Неверный код. Проверьте время на телефоне и попробуйте снова.");
+    else onDone();
+    setBusy(false);
+  }
+  return (
+    <div className="full-page">
+      <div className="login-card">
+        <ShieldCheck size={36} color="#4762c9"/>
+        <h1>Код подтверждения</h1>
+        <p>Введите 6 цифр из приложения-аутентификатора</p>
+        <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="123456"
+          value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,""))}/>
+        <button className="btn btn-primary btn-full" disabled={busy||code.length!==6} onClick={verify}>Подтвердить</button>
+        {err&&<p className="error-msg">{err}</p>}
+        <button className="btn btn-outline btn-full" style={{marginTop:10}} onClick={()=>sb.auth.signOut()}><LogOut size={16}/> Выйти</button>
+      </div>
+    </div>
+  );
+}
+
+function MfaSetup({ onClose }: { onClose: () => void }) {
+  const [state, setState] = useState<"loading"|"enabled"|"enroll">("loading");
+  const [qr, setQr] = useState(""); const [secret, setSecret] = useState(""); const [factorId, setFactorId] = useState("");
+  const [code, setCode] = useState(""); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
+  useEffect(() => { (async () => {
+    const { data } = await sb.auth.mfa.listFactors();
+    if ((data?.totp||[]).length>0) { setState("enabled"); return; }
+    for (const f of (data?.all||[])) if (f.status==="unverified") await sb.auth.mfa.unenroll({ factorId: f.id });
+    const { data: en, error } = await sb.auth.mfa.enroll({ factorType: "totp", friendlyName: `Taxpasso ${Date.now()}` });
+    if (error||!en) { setMsg(error?.message||"Не удалось начать подключение"); setState("enroll"); return; }
+    setFactorId(en.id); setQr(en.totp.qr_code); setSecret(en.totp.secret); setState("enroll");
+  })(); }, []);
+  async function verify() {
+    setBusy(true); setMsg("");
+    const { error } = await sb.auth.mfa.challengeAndVerify({ factorId, code: code.trim() });
+    if (error) setMsg("Неверный код. Попробуйте ещё раз."); else setState("enabled");
+    setBusy(false);
+  }
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="dialog" onClick={e=>e.stopPropagation()}>
+        <h2>Двухфакторная защита</h2>
+        {state==="loading"&&<p>Загрузка…</p>}
+        {state==="enabled"&&<p>✓ Подключена. При входе потребуется код из приложения-аутентификатора.</p>}
+        {state==="enroll"&&(
+          <>
+            <p>1. Откройте Google Authenticator, 1Password или другое приложение-аутентификатор и отсканируйте QR-код.</p>
+            {qr&&<img src={qr} alt="QR-код для аутентификатора" style={{width:180,height:180,display:"block",margin:"8px auto"}}/>}
+            {secret&&<p style={{fontSize:12,wordBreak:"break-all"}}>Или введите ключ вручную: <code>{secret}</code></p>}
+            <p>2. Введите 6 цифр из приложения:</p>
+            <input className="partner-select" inputMode="numeric" maxLength={6} placeholder="123456"
+              value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,""))}/>
+            <div className="dialog-actions" style={{marginTop:12}}>
+              <button className="btn btn-primary" disabled={busy||code.length!==6||!factorId} onClick={verify}>Подключить</button>
+            </div>
+          </>
+        )}
+        {msg&&<p className="error-msg">{msg}</p>}
+        <div className="dialog-actions" style={{marginTop:12}}><button className="btn btn-outline" onClick={onClose}>Закрыть</button></div>
+      </div>
+    </div>
+  );
+}
+
 function ApplyForm({ userId, onDone }: { userId: string; onDone: () => void }) {
   const [name, setName] = useState("");
   const [qual, setQual] = useState("CAA");
@@ -348,6 +425,15 @@ function App() {
   const [coEin, setCoEin] = useState("");
   const [coDate, setCoDate] = useState("");
   const [confirm, setConfirm] = useState<Confirm|null>(null);
+  const [needMfa, setNeedMfa] = useState(false);
+  const [showMfa, setShowMfa] = useState(false);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [refunds, setRefunds] = useState<Refund[]>([]);
+  const [audit, setAudit] = useState<AuditRow[]>([]);
+  const [cancelReason, setCancelReason] = useState("");
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundScope, setRefundScope] = useState("order");
+  const [refundReason, setRefundReason] = useState("");
   const { toasts, add: toast } = useToasts();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -374,6 +460,9 @@ function App() {
 
   async function bootstrap() {
     setLoading(true);
+    const { data: aal } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aal && aal.nextLevel==="aal2" && aal.currentLevel!=="aal2") { setNeedMfa(true); setLoading(false); return; }
+    setNeedMfa(false);
     const { data: prof } = await sb.from("profiles").select("role").eq("id", user!.id).single();
     // Кабинет доступен только ролям admin и partner; все остальные (в т.ч. client) — на экран заявки.
     const raw = prof?.role;
@@ -427,6 +516,12 @@ function App() {
     setPartnerDocs(p.data||[]);
     const { data: co } = await sb.from("companies").select("*").eq("order_id",orderId).maybeSingle();
     setCompany(co||null);
+    const [ms, rf, au] = await Promise.all([
+      sb.from("order_milestones").select("*").eq("order_id",orderId),
+      sb.from("order_refunds").select("*").eq("order_id",orderId).order("created_at"),
+      sb.from("audit_log").select("*").eq("order_id",orderId).order("at",{ascending:false}).limit(50),
+    ]);
+    setMilestones(ms.data||[]); setRefunds(rf.data||[]); setAudit(au.data||[]);
   }
 
   useEffect(() => {
@@ -441,7 +536,8 @@ function App() {
 
   async function rpc(fn: string, args: Record<string,unknown>, successMsg: string) {
     setBusy(true);
-    const { error } = await sb.rpc(fn, args);
+    const { data, error } = await sb.rpc(fn, args);
+    if (error && error.message==="Status changed") { await loadOrders(); }
     if (error) {
       toast("error", error.message==="Payment required" ? "Сначала нужна оплата" :
         error.message==="Eligibility approval required" ? "Сначала подтвердите основание ITIN" :
@@ -451,13 +547,19 @@ function App() {
         error.message==="Partner documents required" ? "Загрузите и отправьте Articles, письмо EIN и Operating Agreement" :
         error.message==="Proposal outdated" ? "Предложение устарело, обновите страницу" :
         error.message==="Order closed" ? "Заказ закрыт" :
+        error.message==="Order cancelled" ? "Заказ отменён" :
+        error.message==="Status changed" ? "Статус уже изменился — страница обновлена, проверьте ещё раз" :
+        error.message==="Already filed" ? "Нельзя отменить: документы уже поданы (у клиента или у партнёра)" :
+        error.message==="Reason required" ? "Укажите причину" :
+        error.message==="Amount must be positive" ? "Сумма должна быть больше нуля" :
+        error.message==="MFA required" ? "Нужен вход с кодом из приложения-аутентификатора" :
         error.message==="Company EIN required" ? "Нужны EIN и одобрение данных компании администратором" :
         error.message==="Final documents required" ? "Передайте клиенту Articles, письмо EIN и Operating Agreement" :
         error.message==="EIN format must be 12-3456789" ? "EIN в формате 12-3456789" :
         error.message==="Invalid registration date" ? "Укажите дату регистрации (не в будущем)" :
         error.message||"Не удалось выполнить действие");
     } else {
-      toast("success", successMsg);
+      toast(data==="already_done" ? "info" : "success", data==="already_done" ? "Уже выполнено ранее" : successMsg);
       const prevId = selected?.id;
       await loadOrders();
       if (prevId) {
@@ -521,6 +623,7 @@ function App() {
 
   if (loading) return <div className="full-page"><p style={{color:"#667085"}}>Загрузка…</p></div>;
   if (!user) return <LoginScreen onAuth={u=>setUser(u)}/>;
+  if (needMfa) return <MfaChallenge onDone={()=>{ setNeedMfa(false); bootstrap(); }}/>;
   if (!role) return <PendingScreen app={app} userId={user.id} onApplied={bootstrap}/>;
   if (app?.status==="rejected") return <PendingScreen app={app}/>;
 
@@ -529,6 +632,7 @@ function App() {
   return (
     <div className="shell">
       <Toasts toasts={toasts}/>
+      {showMfa&&<MfaSetup onClose={()=>setShowMfa(false)}/>}
       {confirm && <ConfirmDialog c={confirm} onCancel={()=>setConfirm(null)}/>}
 
       <header>
@@ -548,6 +652,7 @@ function App() {
               </button>
             </div>
           )}
+          <button className="icon-btn" title="Двухфакторная защита" onClick={()=>setShowMfa(true)}><ShieldCheck size={17}/></button>
           <span className="role-badge">{role.toUpperCase()}</span>
           <button className="icon-btn" onClick={()=>sb.auth.signOut()} title="Выйти"><LogOut size={17}/></button>
         </div>
@@ -602,7 +707,7 @@ function App() {
 
       {/* ─── Operations tab (admin) ────────────────────────────────── */}
       {tab==="operations"&&role==="admin"&&(()=>{
-        const ops = orders.filter(o=>o.closed_at&&!o.product.startsWith("itin"))
+        const ops = orders.filter(o=>o.closed_at&&!o.cancelled_at&&!o.product.startsWith("itin"))
           .sort((a,b)=>(a.service_until||"").localeCompare(b.service_until||""));
         return (
           <div className="app-list">
@@ -659,7 +764,7 @@ function App() {
                 <strong>{o.applicant?.company||o.applicant?.name||"Без названия"}</strong>
                 <small>{PROD[o.product]||o.product} · {STATUS[viewOrder(o).status]||o.status}</small>
                 <div className="badges">
-                  {o.closed_at&&<span className="badge approved-el">Закрыт</span>}
+                  {o.cancelled_at ? <span className="badge pending-el">Отменён</span> : o.closed_at&&<span className="badge approved-el">Закрыт</span>}
                   {role==="admin"&&proposals.some(p=>p.order_id===o.id)&&(
                     <span className="badge doc-review">Ждёт вашего подтверждения</span>
                   )}
@@ -696,6 +801,16 @@ function App() {
                   </div>
                   <span className="status-pill">{STATUS[viewOrder(selected).status]||selected.status}</span>
                 </div>
+
+                {selected.cancelled_at&&(
+                  <div className="alert danger"><XCircle size={16}/> Заказ отменён {fmt(selected.cancelled_at)}{selected.cancel_reason?`: ${selected.cancel_reason}`:""}</div>
+                )}
+                {milestones.map(m=>(
+                  <div key={m.milestone} className="alert info">
+                    <ShieldCheck size={16}/> {m.milestone==="state_filed"?"Документы поданы в штат":"W-7 отправлена в IRS"} {fmt(m.recorded_at)}
+                    {m.partner_id&&role==="admin"?` · ${partners.find(p=>p.id===m.partner_id)?.display_name||"партнёр"}`:""}. Повторно не подавать.
+                  </div>
+                ))}
 
                 {/* Status tracker */}
                 <StatusTracker order={viewOrder(selected)}/>
@@ -762,7 +877,7 @@ function App() {
                                     title:`Перевести в «${label}»?`,
                                     body: STEP_HINTS[next]||"Подтвердите переход на следующий этап.",
                                     confirmLabel:"Перевести",
-                                    onConfirm:()=>rpc("propose_status",{p_order:selected.id,p_stream:stream},`Статус → ${label}`)
+                                    onConfirm:()=>rpc("propose_status",{p_order:selected.id,p_stream:stream,p_to:next,p_op:crypto.randomUUID()},`Статус → ${label}`)
                                   })}>
                                   <span>{label}</span><span className="step-arrow"><ArrowRight size={13}/></span>
                                 </button>
@@ -776,7 +891,7 @@ function App() {
                                     title:`Уведомить клиента: «${label}»?`,
                                     body:"Клиент сразу увидит новый статус в своём кабинете.",
                                     confirmLabel:"Подтвердить",
-                                    onConfirm:()=>rpc("confirm_status",{p_order:selected.id,p_stream:stream},`Клиент видит: ${label}`)
+                                    onConfirm:()=>rpc("confirm_status",{p_order:selected.id,p_stream:stream,p_to:next,p_op:crypto.randomUUID()},`Клиент видит: ${label}`)
                                   })}>
                                   <span>{partnerAhead||noPartner?`Подтвердить: ${label}`:`Ждём партнёра: ${label}`}</span>
                                   <span className="step-arrow"><ArrowRight size={13}/></span>
@@ -800,6 +915,57 @@ function App() {
                           </div>
                         );
                       })}
+
+                    {/* Отмена (admin) */}
+                    {role==="admin"&&!selected.closed_at&&(
+                      <div className="action-section">
+                        <div className="action-label">ОТМЕНА ЗАКАЗА</div>
+                        {milestones.length>0 ? (
+                          <div className="step-hint">Отмена недоступна: документы уже поданы ({milestones.map(m=>m.milestone==="state_filed"?"в штат":"в IRS").join(", ")}).</div>
+                        ) : (
+                          <>
+                            <textarea className="note-area" placeholder="Причина отмены *" value={cancelReason} onChange={e=>setCancelReason(e.target.value)}/>
+                            <button className="btn btn-danger btn-full" style={{marginTop:6}} disabled={busy||cancelReason.trim().length<3}
+                              onClick={()=>setConfirm({
+                                title:"Отменить заказ?",
+                                body:`Причина: «${cancelReason.trim()}». Отмена не возвращает деньги — сумму возврата запишите отдельно ниже.`,
+                                confirmLabel:"Отменить заказ",danger:true,
+                                onConfirm:()=>{ rpc("cancel_order",{p_order:selected.id,p_reason:cancelReason,p_op:crypto.randomUUID()},"Заказ отменён"); setCancelReason(""); }
+                              })}>
+                              <XCircle size={15}/> Отменить заказ
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Возврат (admin) */}
+                    {role==="admin"&&selected.payment_status==="paid"&&(
+                      <div className="action-section">
+                        <div className="action-label">ВОЗВРАТ СРЕДСТВ</div>
+                        <div style={{display:"flex",gap:8}}>
+                          <input className="partner-select" style={{flex:1}} type="number" min={1} step="0.01" placeholder="Сумма, $" value={refundAmount} onChange={e=>setRefundAmount(e.target.value)}/>
+                          <select className="partner-select" style={{flex:1}} value={refundScope} onChange={e=>setRefundScope(e.target.value)}>
+                            <option value="order">Весь заказ</option><option value="llc">LLC</option><option value="itin">ITIN</option><option value="other">Другое</option>
+                          </select>
+                        </div>
+                        <textarea className="note-area" placeholder="Причина и расчёт возврата *" value={refundReason} onChange={e=>setRefundReason(e.target.value)}/>
+                        <button className="btn btn-outline btn-full" style={{marginTop:6}}
+                          disabled={busy||!(Number(refundAmount)>0)||refundReason.trim().length<3}
+                          onClick={()=>{
+                            const cents = Math.round(Number(refundAmount)*100);
+                            setConfirm({
+                              title:`Записать возврат $${(cents/100).toFixed(2)}?`,
+                              body:"Запись нельзя изменить или удалить. Клиент увидит её в кабинете. Сами деньги переводите отдельно.",
+                              confirmLabel:"Записать",
+                              onConfirm:()=>{ rpc("record_refund",{p_order:selected.id,p_amount_cents:cents,p_scope:refundScope,p_reason:refundReason,p_op:crypto.randomUUID()},"Возврат записан"); setRefundAmount(""); setRefundReason(""); }
+                            });
+                          }}>Записать возврат</button>
+                        {refunds.map(r=>(
+                          <div key={r.id} className="step-hint">↩ ${(r.amount_cents/100).toFixed(2)} · {r.scope} · {fmt(r.created_at)} · {r.reason}</div>
+                        ))}
+                      </div>
+                    )}
 
                     {/* Срок пакета (admin) */}
                     {role==="admin"&&!selected.product.startsWith("itin")&&(
@@ -1072,6 +1238,32 @@ function App() {
                     </>
                   )}
                 </div>
+
+                {/* Audit (admin) */}
+                {role==="admin"&&(
+                  <div className="card" style={{marginBottom:18}}>
+                    <h2>Журнал действий</h2>
+                    {audit.length===0&&<p style={{color:"#94a3b8",fontSize:13}}>Записей нет</p>}
+                    {audit.map(a=>{
+                      const nv=(a.new_value||{}) as Record<string,unknown>; const ov=(a.old_value||{}) as Record<string,unknown>;
+                      const what = a.entity==="orders" ? (nv.status!==ov.status?`статус: ${STATUS[String(ov.status)]||ov.status||"—"} → ${STATUS[String(nv.status)]||nv.status}`
+                          : nv.partner_id!==ov.partner_id?"смена партнёра" : nv.payment_status!==ov.payment_status?`оплата: ${nv.payment_status}`
+                          : nv.cancelled_at&&!ov.cancelled_at?"отмена" : nv.eligibility!==ov.eligibility?`ITIN: ${nv.eligibility}` : nv.closed_at&&!ov.closed_at?"закрытие":"изменение заказа")
+                        : a.entity==="status_proposals" ? (a.action==="delete"?"прогресс партнёра сброшен/подтверждён":`партнёр: ${STATUS[String(nv.proposed_status)]||nv.proposed_status}`)
+                        : a.entity==="partner_documents" ? `документ партнёра: ${nv.visibility}`
+                        : a.entity==="documents" ? (nv.superseded_at&&!ov.superseded_at?"документ клиента заменён":`документ клиента: ${nv.review_status}`)
+                        : a.entity==="companies" ? (nv.approved&&!ov.approved?"данные компании одобрены":"данные компании")
+                        : a.entity==="order_refunds" ? `возврат $${(Number(nv.amount_cents)/100).toFixed(2)}`
+                        : a.entity==="order_milestones" ? "факт подачи" : `${a.entity}: ${a.action}`;
+                      return (
+                        <div className="history-row" key={a.id}>
+                          <span>{what}{a.reason?` · «${a.reason}»`:""} <span style={{color:"#94a3b8"}}>· {a.actor_role||"система"}</span></span>
+                          <time>{fmt(a.at)}</time>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* History */}
                 <div className="card">
