@@ -45,6 +45,10 @@ type ClientDoc = {
   mime_type: string; size_bytes: number; created_at: string;
   review_status: string; review_comment?: string | null;
 };
+type DocumentReviewProposal = {
+  document_id: string; order_id: string; status: "accepted" | "rejected";
+  comment?: string | null; proposed_by?: string | null; proposed_at: string;
+};
 type Toast = { id: number; type: "success"|"error"|"info"|"warn"; text: string; leaving?: boolean };
 type Confirm = { title: string; body: string; confirmLabel: string; danger?: boolean; onConfirm: () => void };
 
@@ -413,6 +417,7 @@ function App() {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [applications, setApplications] = useState<PartnerApp[]>([]);
   const [clientDocs, setClientDocs] = useState<ClientDoc[]>([]);
+  const [documentReviewProposals, setDocumentReviewProposals] = useState<DocumentReviewProposal[]>([]);
   const [partnerDocs, setPartnerDocs] = useState<PartnerDoc[]>([]);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -508,11 +513,13 @@ function App() {
     setApplications(data||[]);
   }
   async function loadDocs(orderId: string) {
-    const [c, p] = await Promise.all([
+    const [c, p, reviewProposals] = await Promise.all([
       sb.from("documents").select("*").eq("order_id",orderId).order("created_at"),
       sb.from("partner_documents").select("*").eq("order_id",orderId).order("created_at"),
+      sb.from("document_review_proposals").select("*").eq("order_id",orderId),
     ]);
     setClientDocs(c.data||[]);
+    setDocumentReviewProposals(reviewProposals.data||[]);
     setPartnerDocs(p.data||[]);
     const { data: co } = await sb.from("companies").select("*").eq("order_id",orderId).maybeSingle();
     setCompany(co||null);
@@ -1140,27 +1147,62 @@ function App() {
                         <div className="doc-name">{d.name}</div>
                         <div className="doc-meta">{fmtBytes(d.size_bytes)} · {fmt(d.created_at)}</div>
                         {d.review_comment&&<div className="doc-meta" style={{color:"#a32828"}}>Замечание: {d.review_comment}</div>}
+                        {role==="partner"&&documentReviewProposals.some(p=>p.document_id===d.id)&&<div className="doc-meta" style={{color:"#a15c00",fontWeight:600}}>Предложение передано администратору. Клиент увидит результат после его подтверждения.</div>}
                       </div>
                       <span className={`badge ${d.review_status==="accepted"?"doc-published":d.review_status==="rejected"?"pending-el":"unpaid"}`}>
                         {d.review_status==="accepted"?"Принят":d.review_status==="rejected"?"Отклонён":"На проверке"}
                       </span>
                       <div className="doc-actions">
                         <button className="btn btn-outline btn-sm" onClick={()=>openDoc(d.path)}>Открыть</button>
-                        {role==="admin"&&d.review_status!=="accepted"&&(
-                          <button className="btn btn-success btn-sm" disabled={busy}
-                            onClick={()=>rpc("review_document",{p_document:d.id,p_status:"accepted",p_comment:null},"Документ принят")}>
-                            <Check size={13}/>
-                          </button>
+                        {role==="partner"&&d.review_status!=="accepted"&&d.review_status!=="rejected"&&(
+                          <div className="doc-actions">
+                            <button className="btn btn-success btn-sm" disabled={busy}
+                              onClick={()=>rpc("propose_document_review",{p_document:d.id,p_status:"accepted",p_comment:null,p_op:crypto.randomUUID()},"Предложение принять отправлено администратору")}>
+                              Предложить: принять
+                            </button>
+                            <button className="btn btn-danger btn-sm" disabled={busy}
+                              onClick={()=>{
+                                const reason=prompt("Причина отклонения документа");
+                                if(reason?.trim()) rpc("propose_document_review",{p_document:d.id,p_status:"rejected",p_comment:reason.trim(),p_op:crypto.randomUUID()},"Предложение отклонить отправлено администратору");
+                              }}>
+                              Предложить: отклонить
+                            </button>
+                          </div>
                         )}
-                        {role==="admin"&&d.review_status!=="rejected"&&(
-                          <button className="btn btn-danger btn-sm" disabled={busy}
-                            onClick={()=>{
-                              const reason=prompt("Причина отклонения документа");
-                              if(reason) rpc("review_document",{p_document:d.id,p_status:"rejected",p_comment:reason},"Документ отклонён");
-                            }}>
-                            <X size={13}/>
-                          </button>
-                        )}
+                        {role==="admin"&&(()=>{
+                          const proposal=documentReviewProposals.find(p=>p.document_id===d.id);
+                          return (
+                            <div>
+                              {proposal&&<div className="doc-meta" style={{color:"#a15c00",fontWeight:600,marginBottom:6}}>
+                                Партнёр предлагает {proposal.status==="accepted"?"принять":"отклонить"} документ
+                                {proposal.comment&&<span> · {proposal.comment}</span>}
+                              </div>}
+                              <div className="doc-actions">
+                                {proposal&&<>
+                                  <button className="btn btn-success btn-sm" disabled={busy}
+                                    onClick={()=>rpc("confirm_document_review",{p_document:d.id,p_op:crypto.randomUUID()},"Предложение подтверждено; клиент увидит решение")}>
+                                    <Check size={13}/> Подтвердить
+                                  </button>
+                                  <button className="btn btn-outline btn-sm" disabled={busy}
+                                    onClick={()=>rpc("return_document_review",{p_document:d.id},"Предложение возвращено партнёру")}>
+                                    Вернуть
+                                  </button>
+                                </>}
+                                {d.review_status!=="accepted"&&<button className="btn btn-success btn-sm" disabled={busy}
+                                  onClick={()=>rpc("review_document",{p_document:d.id,p_status:"accepted",p_comment:null},"Вы приняли документ; клиент увидит решение")}>
+                                  Решить самому: принять
+                                </button>}
+                                {d.review_status!=="rejected"&&<button className="btn btn-danger btn-sm" disabled={busy}
+                                  onClick={()=>{
+                                    const reason=prompt("Причина отклонения документа");
+                                    if(reason?.trim()) rpc("review_document",{p_document:d.id,p_status:"rejected",p_comment:reason.trim()},"Вы отклонили документ; клиент увидит решение");
+                                  }}>
+                                  Решить самому: отклонить
+                                </button>}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   ))}
