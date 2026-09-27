@@ -16,7 +16,7 @@ const sb = createClient(
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Role = "admin" | "partner" | "";
 type Order = {
-  id: string; product: string; status: string; itin_status?: string | null;
+  id: string; product: string; status: string; itin_status?: string | null; itin_attempt?: number;
   eligibility: string; eligibility_note?: string | null;
   payment_status: string; payment_note?: string | null; payment_marked_manually?: boolean;
   applicant: Record<string, string>; created_at: string; partner_id?: string | null;
