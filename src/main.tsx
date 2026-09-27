@@ -982,7 +982,10 @@ function App() {
                     {role==="admin"&&selected.payment_status!=="paid"&&(
                       <div className="action-section">
                         <div className="action-label">ОПЛАТА</div>
-                        <button className="btn btn-primary btn-full" disabled={busy}
+                        {(()=>{ const gated=(selected.product.includes("itin")||selected.product.includes("bundle"))&&selected.eligibility!=="approved";
+                          return gated ? <div className="step-hint" style={{marginBottom:8}}>Оплату можно отметить только после одобрения основания ITIN. Сейчас: {selected.eligibility==="rejected"?"отклонено":"на проверке"}.</div> : null; })()}
+                        <button className="btn btn-primary btn-full"
+                          disabled={busy||((selected.product.includes("itin")||selected.product.includes("bundle"))&&selected.eligibility!=="approved")}
                           onClick={()=>{
                             const note=prompt("Комментарий к оплате (необязательно)")||"";
                             setConfirm({
