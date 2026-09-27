@@ -28,6 +28,9 @@ type Milestone = { order_id: string; milestone: string; recorded_at: string; par
 type Refund = { id: string; order_id: string; amount_cents: number; scope: string; reason: string; created_at: string };
 type AuditRow = { id: number; at: string; actor_role?: string | null; entity: string; action: string; old_value?: Record<string, unknown> | null; new_value?: Record<string, unknown> | null; reason?: string | null };
 type Proposal = { order_id: string; stream: "main"|"itin"; proposed_status: string; proposed_at: string };
+type EligibilityProposal = { order_id: string; decision: "approve" | "reject"; reason?: string | null; proposed_at: string };
+type ItinRecord = { order_id: string; itin: string; assigned_on?: string | null; approved: boolean };
+type IrsEvent = { id: string; order_id: string; kind: "request" | "rejection"; note: string; attempt: number; created_at: string };
 type PartnerApp = {
   id: string; user_id: string; full_name: string; qualification: string;
   bio?: string | null; status: "pending" | "approved" | "rejected";
@@ -55,12 +58,13 @@ type Confirm = { title: string; body: string; confirmLabel: string; danger?: boo
 // ─── Constants ────────────────────────────────────────────────────────────────
 const LLC_CHAIN = ["application","review","filed_state","registered","ein_requested","ein_received"];
 const ITIN_CHAIN = ["documents","caa_interview","sent_irs","itin_received"];
+const ITIN_RETURN_CHAIN = ["documents","return_prep","client_signed","caa_interview","sent_irs","itin_received"];
 const STATUS: Record<string,string> = {
   draft:"Черновик", application:"Анкета", review:"Проверка",
   filed_state:"Подано в штат", registered:"Компания зарегистрирована",
   ein_requested:"EIN запрошен", ein_received:"EIN получен",
-  documents:"Документы", caa_interview:"Интервью CAA",
-  sent_irs:"Отправлено в IRS", itin_received:"ITIN получен",
+  documents:"Документы", return_prep:"Подготовка декларации", client_signed:"Декларация подписана клиентом",
+  caa_interview:"Интервью CAA", sent_irs:"Отправлено в IRS", itin_received:"ITIN получен",
 };
 const PROD: Record<string,string> = {
   llc_wy:"LLC Wyoming", llc_de:"LLC Delaware",
@@ -69,7 +73,9 @@ const PROD: Record<string,string> = {
 };
 const DOC_TYPES: Record<string,string> = {
   articles:"Articles of Organization", ein_letter:"Письмо EIN (IRS)",
-  operating_agreement:"Operating Agreement", other:"Другой документ",
+  operating_agreement:"Operating Agreement", w7:"Форма W-7", coa:"Письмо CAA",
+  tax_return:"Налоговая декларация 1040-NR", itin_letter:"Письмо IRS с ITIN",
+  other:"Другой документ",
 };
 const STEP_HINTS: Record<string,string> = {
   review:"Проверить анкету клиента и загруженные документы",
@@ -89,6 +95,7 @@ function fmtBytes(n: number) {
   return n<1024?n+" B":n<1048576?(n/1024).toFixed(0)+" KB":(n/1048576).toFixed(1)+" MB";
 }
 function chain(product: string): string[] {
+  if (product === "itin_return") return ITIN_RETURN_CHAIN;
   return product.startsWith("itin") ? ITIN_CHAIN : LLC_CHAIN;
 }
 
@@ -409,6 +416,11 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"orders"|"operations"|"applications">("orders");
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [eligibilityProposals, setEligibilityProposals] = useState<EligibilityProposal[]>([]);
+  const [itinRecord, setItinRecord] = useState<ItinRecord|null>(null);
+  const [itinEntry, setItinEntry] = useState("");
+  const [itinAssignedOn, setItinAssignedOn] = useState("");
+  const [irsEvents, setIrsEvents] = useState<IrsEvent[]>([]);
   const [showClosed, setShowClosed] = useState(false);
   const [allCompanies, setAllCompanies] = useState<Company[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -495,14 +507,27 @@ function App() {
   }
 
   async function loadOrders() {
-    const [{ data: pr }, { data: cos }] = await Promise.all([
+    const [{ data: pr }, { data: ep }, { data: cos }] = await Promise.all([
       sb.from("status_proposals").select("*"),
+      sb.from("eligibility_proposals").select("*"),
       sb.from("companies").select("*"),
     ]);
-    setProposals(pr||[]); setAllCompanies(cos||[]);
-    const { data } = await sb.from("orders").select("*,order_status_history(*)").order("created_at",{ascending:false});
-    setOrders(data||[]);
-    if (data&&data.length>0) setSelected(s => s ? (data.find(o=>o.id===s.id)||data[0]) : data[0]);
+    setProposals(pr||[]); setEligibilityProposals(ep||[]); setAllCompanies(cos||[]);
+    let data: any[] = [];
+    if(role==="partner"){
+      const { data: partnerOrders } = await sb.rpc("partner_orders");
+      const rows = partnerOrders||[];
+      if(rows.length){
+        const ids=rows.map((o:any)=>o.id);
+        const { data: history } = await sb.from("order_status_history").select("*").in("order_id",ids);
+        data=rows.map((o:any)=>({...o,payment_status:o.in_work?"paid":"unpaid",order_status_history:(history||[]).filter((h:any)=>h.order_id===o.id)}));
+      }
+    } else {
+      const { data: adminOrders } = await sb.from("orders").select("*,order_status_history(*)").order("created_at",{ascending:false});
+      data=adminOrders||[];
+    }
+    setOrders(data);
+    if(data.length>0) setSelected(s=>s?(data.find(o=>o.id===s.id)||data[0]):data[0]);
   }
   async function loadPartners() {
     const { data } = await sb.from("partners").select("*");
@@ -521,6 +546,14 @@ function App() {
     setClientDocs(c.data||[]);
     setDocumentReviewProposals(reviewProposals.data||[]);
     setPartnerDocs(p.data||[]);
+    const [{ data: ir }, { data: events }] = await Promise.all([
+      sb.from("order_itin").select("*").eq("order_id",orderId).maybeSingle(),
+      sb.from("itin_irs_events").select("*").eq("order_id",orderId).order("created_at",{ascending:false}),
+    ]);
+    setItinRecord(ir||null);
+    setItinEntry(ir?.itin||"");
+    setItinAssignedOn(ir?.assigned_on||"");
+    setIrsEvents(events||[]);
     const { data: co } = await sb.from("companies").select("*").eq("order_id",orderId).maybeSingle();
     setCompany(co||null);
     const [ms, rf, au] = await Promise.all([
@@ -548,6 +581,7 @@ function App() {
     if (error) {
       toast("error", error.message==="Payment required" ? "Сначала нужна оплата" :
         error.message==="Eligibility approval required" ? "Сначала подтвердите основание ITIN" :
+        error.message==="Partner eligibility approval required" ? "Основание ITIN ещё не подтверждено администратором" :
         error.message==="Admin only" ? "Только для администратора" :
         error.message==="Waiting for partner" ? "Партнёр ещё не дошёл до этого этапа" :
         error.message==="Partner EIN required" ? "Сначала внесите EIN в «Данные компании»" :
@@ -853,6 +887,61 @@ function App() {
                   <div className="card">
                     <h2>Действия</h2>
 
+                    {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&(
+                      <div className="action-section">
+                        <div className="action-label">ОСНОВАНИЕ ITIN · РЕШЕНИЕ АДМИНИСТРАТОРА</div>
+                        {eligibilityProposals.find(p=>p.order_id===selected.id)&&(()=>{
+                          const proposal=eligibilityProposals.find(p=>p.order_id===selected.id)!;
+                          return <div className="alert warn" style={{marginBottom:10}}>
+                            <AlertCircle size={15}/> Партнёр предлагает: {proposal.decision==="approve"?"одобрить":"отклонить"}
+                            {proposal.reason&&<span> · {proposal.reason}</span>}
+                          </div>;
+                        })()}
+                        {role==="partner"&&(selected.eligibility==="pending"||(selected.product.startsWith("bundle")&&selected.eligibility==="approved"))&&(
+                          <div className="doc-actions">
+                            <button className="btn btn-success btn-sm" disabled={busy}
+                              onClick={()=>rpc("propose_eligibility",{p_order:selected.id,p_decision:"approve",p_reason:null,p_op:crypto.randomUUID()},"Предложение одобрить основание отправлено администратору")}>
+                              Предложить одобрить
+                            </button>
+                            <button className="btn btn-danger btn-sm" disabled={busy}
+                              onClick={()=>{
+                                const reason=prompt("Почему основание ITIN не подходит?");
+                                if(reason?.trim()) rpc("propose_eligibility",{p_order:selected.id,p_decision:"reject",p_reason:reason.trim(),p_op:crypto.randomUUID()},"Предложение отклонить основание отправлено администратору");
+                              }}>
+                              Предложить отклонить
+                            </button>
+                          </div>
+                        )}
+                        {role==="admin"&&eligibilityProposals.some(p=>p.order_id===selected.id)&&(
+                          <div className="doc-actions">
+                            <button className="btn btn-success btn-sm" disabled={busy}
+                              onClick={()=>rpc("confirm_eligibility",{p_order:selected.id,p_op:crypto.randomUUID()},"Решение по основанию подтверждено")}>
+                              <Check size={13}/> Подтвердить
+                            </button>
+                            <button className="btn btn-outline btn-sm" disabled={busy}
+                              onClick={()=>rpc("return_eligibility_proposal",{p_order:selected.id},"Предложение возвращено партнёру")}>
+                              Вернуть
+                            </button>
+                          </div>
+                        )}
+                        {role==="admin"&&selected.eligibility!=="approved"&&(
+                          <button className="btn btn-success btn-full" disabled={busy} style={{marginTop:8}}
+                            onClick={()=>rpc("approve_eligibility",{p_order:selected.id},"Основание одобрено; ITIN-клиент уведомлён")}>
+                            Решить самому: одобрить
+                          </button>
+                        )}
+                        {role==="admin"&&selected.eligibility!=="rejected"&&(
+                          <button className="btn btn-danger btn-full" disabled={busy} style={{marginTop:8}}
+                            onClick={()=>{
+                              const reason=prompt("Причина отказа в основании ITIN");
+                              if(reason?.trim()) rpc("reject_eligibility",{p_order:selected.id,p_reason:reason.trim()},"Основание отклонено; ITIN-клиент уведомлён");
+                            }}>
+                            Решить самому: отклонить
+                          </button>
+                        )}
+                      </div>
+                    )}
+
                     {/* Этапы: партнёр предлагает → admin подтверждает */}
                     {selected.closed_at&&(
                       <div className="action-section">
@@ -1070,6 +1159,58 @@ function App() {
                     )}
                   </div>
                 </div>
+
+                {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&(
+                  <div className="card" style={{marginBottom:18}}>
+                    <h2>Номер ITIN</h2>
+                    {itinRecord&&<div className="alert info" style={{marginBottom:10}}>
+                      {itinRecord.approved?"Одобрен администратором — клиент видит номер: ":"Внесён партнёром — клиент пока не видит номер: "}
+                      <b>{itinRecord.itin}</b>
+                      {itinRecord.assigned_on&&<span> · дата присвоения {itinRecord.assigned_on}</span>}
+                    </div>}
+                    {role==="partner"&&(
+                      <div className="grid-2">
+                        <input className="partner-select" placeholder="9XX-XX-XXXX" value={itinEntry} onChange={e=>setItinEntry(e.target.value)} />
+                        <input className="partner-select" type="date" value={itinAssignedOn} onChange={e=>setItinAssignedOn(e.target.value)} />
+                        <button className="btn btn-primary" disabled={busy||!/^9[0-9]{2}-[0-9]{2}-[0-9]{4}$/.test(itinEntry)}
+                          onClick={()=>rpc("record_itin",{p_order:selected.id,p_itin:itinEntry,p_assigned_on:itinAssignedOn||null},"Номер ITIN записан и ожидает одобрения администратора")}>
+                          Сохранить ITIN
+                        </button>
+                      </div>
+                    )}
+                    {role==="admin"&&itinRecord&&!itinRecord.approved&&(
+                      <button className="btn btn-success" disabled={busy}
+                        onClick={()=>rpc("approve_itin",{p_order:selected.id},"Номер ITIN одобрен; теперь он виден клиенту")}>
+                        Одобрить ITIN для клиента
+                      </button>
+                    )}
+                    {irsEvents.length>0&&<div style={{marginTop:12}}>
+                      <div className="action-label">ИСТОРИЯ IRS · ПОПЫТКА {selected.itin_attempt||1}</div>
+                      {irsEvents.map(event=><div className="history-row" key={event.id}>
+                        <span>{event.kind==="request"?"Запрос IRS":"Отказ IRS"} · {event.note} · попытка {event.attempt}</span>
+                        <time>{fmt(event.created_at)}</time>
+                      </div>)}
+                    </div>}
+                    {role==="admin"&&(selected.product==="itin_return"||selected.product==="itin_standard"||selected.product.startsWith("bundle"))&&(
+                      <div className="doc-actions" style={{marginTop:12}}>
+                        <button className="btn btn-outline btn-sm" disabled={busy||((selected.product.startsWith("bundle")?selected.itin_status:selected.status)!=="sent_irs")}
+                          onClick={()=>{
+                            const note=prompt("Что запросил IRS?");
+                            if(note?.trim()) rpc("record_irs_event",{p_order:selected.id,p_stream:selected.product.startsWith("bundle")?"itin":"main",p_kind:"request",p_note:note.trim(),p_op:crypto.randomUUID()},"Запрос IRS записан");
+                          }}>
+                          Запрос IRS
+                        </button>
+                        <button className="btn btn-danger btn-sm" disabled={busy||((selected.product.startsWith("bundle")?selected.itin_status:selected.status)!=="sent_irs")}
+                          onClick={()=>{
+                            const note=prompt("Причина отказа IRS?");
+                            if(note?.trim()) rpc("record_irs_event",{p_order:selected.id,p_stream:selected.product.startsWith("bundle")?"itin":"main",p_kind:"rejection",p_note:note.trim(),p_op:crypto.randomUUID()},"Отказ IRS записан; поток ITIN возвращён к документам для бесплатной повторной подачи");
+                          }}>
+                          Отказ IRS · повторная подача
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Company + delivery checklist (LLC) */}
                 {!selected.product.startsWith("itin")&&(()=>{
