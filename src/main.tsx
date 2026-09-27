@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createClient, type User } from "@supabase/supabase-js";
 import {
@@ -69,7 +69,7 @@ const STATUS: Record<string,string> = {
 const PROD: Record<string,string> = {
   llc_wy:"LLC Wyoming", llc_de:"LLC Delaware",
   itin_standard:"ITIN Standard", itin_return:"ITIN + 1040-NR",
-  bundle_wy:"Bundle WY", bundle_de:"Bundle DE",
+  bundle_wy:"LLC Wyoming + ITIN", bundle_de:"LLC Delaware + ITIN",
 };
 const DOC_TYPES: Record<string,string> = {
   articles:"Articles of Organization", ein_letter:"Письмо EIN (IRS)",
@@ -118,7 +118,7 @@ function useToasts() {
 
 function Toasts({ toasts }: { toasts: Toast[] }) {
   return (
-    <div className="toast-wrap">
+    <div className="toast-wrap" role="status" aria-live="polite" aria-atomic="true">
       {toasts.map(t => (
         <div key={t.id} className={`toast ${t.type}${t.leaving?" leaving":""}`}>
           {t.type==="success"?<Check size={16}/>:t.type==="error"?<XCircle size={16}/>:
@@ -132,10 +132,27 @@ function Toasts({ toasts }: { toasts: Toast[] }) {
 
 // ─── Confirm dialog ───────────────────────────────────────────────────────────
 function ConfirmDialog({ c, onCancel }: { c: Confirm; onCancel: () => void }) {
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialogRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    return () => returnFocus.current?.focus();
+  }, []);
+  function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape") { e.stopPropagation(); onCancel(); }
+    if (e.key !== "Tab") return;
+    const buttons = dialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
+    if (!buttons?.length) return;
+    const first = buttons[0], last = buttons[buttons.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
   return (
     <div className="overlay" onClick={onCancel}>
-      <div className="dialog" onClick={e => e.stopPropagation()}>
-        <h2>{c.title}</h2>
+      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialogRef} onKeyDown={onKeyDown} onClick={e => e.stopPropagation()}>
+        <h2 id={titleId}>{c.title}</h2>
         <p>{c.body}</p>
         <div className="dialog-actions">
           <button className="btn btn-outline" onClick={onCancel}>Отмена</button>
@@ -250,14 +267,14 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
           <button className={tab==="sign_up"?"active":""} onClick={()=>{setTab("sign_up");setMsg("");}}>Регистрация</button>
         </div>
         {tab==="sign_up" && <>
-          <input placeholder="ФИО *" value={name} onChange={e=>setName(e.target.value)}/>
-          <select className="partner-select" value={qual} onChange={e=>setQual(e.target.value)} style={{marginBottom:10}}>
+          <input aria-label="ФИО" placeholder="ФИО *" value={name} onChange={e=>setName(e.target.value)}/>
+          <select className="partner-select" aria-label="Квалификация" value={qual} onChange={e=>setQual(e.target.value)} style={{marginBottom:10}}>
             <option>CAA</option><option>CPA</option><option>CAA/CPA</option>
           </select>
-          <textarea className="note-area" placeholder="Коротко о себе (необязательно)" value={bio} onChange={e=>setBio(e.target.value)} style={{marginBottom:10}}/>
+          <textarea className="note-area" aria-label="Коротко о себе" placeholder="Коротко о себе (необязательно)" value={bio} onChange={e=>setBio(e.target.value)} style={{marginBottom:10}}/>
         </>}
-        <input type="email" placeholder="Email *" value={email} onChange={e=>setEmail(e.target.value)}/>
-        <input type="password" placeholder="Пароль (мин. 8 символов) *" value={password} onChange={e=>setPassword(e.target.value)}/>
+        <input aria-label="Email" type="email" placeholder="Email *" value={email} onChange={e=>setEmail(e.target.value)}/>
+        <input aria-label="Пароль" type="password" placeholder="Пароль (мин. 8 символов) *" value={password} onChange={e=>setPassword(e.target.value)}/>
         <button className="btn btn-primary btn-full" style={{marginTop:4}}
           disabled={busy||!email||password.length<8||(tab==="sign_up"&&!name.trim())}
           onClick={submit}>
@@ -300,6 +317,13 @@ function MfaChallenge({ onDone }: { onDone: () => void }) {
 }
 
 function MfaSetup({ onClose }: { onClose: () => void }) {
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialogRef.current?.focus();
+    return () => previous?.focus();
+  }, []);
   const [state, setState] = useState<"loading"|"enabled"|"enroll">("loading");
   const [qr, setQr] = useState(""); const [secret, setSecret] = useState(""); const [factorId, setFactorId] = useState("");
   const [code, setCode] = useState(""); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
@@ -319,8 +343,14 @@ function MfaSetup({ onClose }: { onClose: () => void }) {
   }
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="dialog" onClick={e=>e.stopPropagation()}>
-        <h2>Двухфакторная защита</h2>
+      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialogRef} tabIndex={-1}
+        onKeyDown={e=>{if(e.key==="Escape"){e.stopPropagation();onClose();} if(e.key==="Tab"){
+          const controls=dialogRef.current?.querySelectorAll<HTMLElement>("input,button:not(:disabled)");
+          if(!controls?.length)return;
+          if(e.shiftKey&&document.activeElement===controls[0]){e.preventDefault();controls[controls.length-1].focus();}
+          else if(!e.shiftKey&&document.activeElement===controls[controls.length-1]){e.preventDefault();controls[0].focus();}
+        }}} onClick={e=>e.stopPropagation()}>
+        <h2 id={titleId}>Двухфакторная защита</h2>
         {state==="loading"&&<p>Загрузка…</p>}
         {state==="enabled"&&<p>✓ Подключена. При входе потребуется код из приложения-аутентификатора.</p>}
         {state==="enroll"&&(
@@ -329,7 +359,7 @@ function MfaSetup({ onClose }: { onClose: () => void }) {
             {qr&&<img src={qr} alt="QR-код для аутентификатора" style={{width:180,height:180,display:"block",margin:"8px auto"}}/>}
             {secret&&<p style={{fontSize:12,wordBreak:"break-all"}}>Или введите ключ вручную: <code>{secret}</code></p>}
             <p>2. Введите 6 цифр из приложения:</p>
-            <input className="partner-select" inputMode="numeric" maxLength={6} placeholder="123456"
+            <input className="partner-select" aria-label="Шестизначный код из приложения-аутентификатора" inputMode="numeric" maxLength={6} placeholder="123456"
               value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,""))}/>
             <div className="dialog-actions" style={{marginTop:12}}>
               <button className="btn btn-primary" disabled={busy||code.length!==6||!factorId} onClick={verify}>Подключить</button>
@@ -826,7 +856,7 @@ function App() {
             </div>
             <div className="search-box">
               <Search size={15} color="#94a3b8"/>
-              <input placeholder="Поиск…" value={query} onChange={e=>setQuery(e.target.value)}/>
+              <input aria-label="Поиск заказов" placeholder="Поиск…" value={query} onChange={e=>setQuery(e.target.value)}/>
             </div>
             {filtered.length===0&&<p style={{color:"#94a3b8",fontSize:13,textAlign:"center",padding:"20px 0"}}>Заказов нет</p>}
             {filtered.map(o=>(
@@ -1062,7 +1092,7 @@ function App() {
                           <div className="step-hint">Отмена недоступна: документы уже поданы ({milestones.map(m=>m.milestone==="state_filed"?"в штат":"в IRS").join(", ")}).</div>
                         ) : (
                           <>
-                            <textarea className="note-area" placeholder="Причина отмены *" value={cancelReason} onChange={e=>setCancelReason(e.target.value)}/>
+                            <textarea className="note-area" aria-label="Причина отмены заказа" placeholder="Причина отмены *" value={cancelReason} onChange={e=>setCancelReason(e.target.value)}/>
                             <button className="btn btn-danger btn-full" style={{marginTop:6}} disabled={busy||cancelReason.trim().length<3}
                               onClick={()=>setConfirm({
                                 title:"Отменить заказ?",
@@ -1082,12 +1112,12 @@ function App() {
                       <div className="action-section">
                         <div className="action-label" id="refund-entry">ВОЗВРАТ СРЕДСТВ</div>
                         <div style={{display:"flex",gap:8}}>
-                          <input className="partner-select" style={{flex:1}} type="number" min={1} step="0.01" placeholder="Сумма, $" value={refundAmount} onChange={e=>setRefundAmount(e.target.value)}/>
-                          <select className="partner-select" style={{flex:1}} value={refundScope} onChange={e=>setRefundScope(e.target.value)}>
+                          <input className="partner-select" aria-label="Сумма возврата в долларах" style={{flex:1}} type="number" min={1} step="0.01" placeholder="Сумма, $" value={refundAmount} onChange={e=>setRefundAmount(e.target.value)}/>
+                          <select className="partner-select" aria-label="Часть заказа для возврата" style={{flex:1}} value={refundScope} onChange={e=>setRefundScope(e.target.value)}>
                             <option value="order">Весь заказ</option><option value="llc">LLC</option><option value="itin">ITIN</option><option value="other">Другое</option>
                           </select>
                         </div>
-                        <textarea className="note-area" placeholder="Причина и расчёт возврата *" value={refundReason} onChange={e=>setRefundReason(e.target.value)}/>
+                        <textarea className="note-area" aria-label="Причина и расчёт возврата" placeholder="Причина и расчёт возврата *" value={refundReason} onChange={e=>setRefundReason(e.target.value)}/>
                         <button className="btn btn-outline btn-full" style={{marginTop:6}}
                           disabled={busy||!(Number(refundAmount)>0)||refundReason.trim().length<3}
                           onClick={()=>{
@@ -1184,14 +1214,16 @@ function App() {
                     </div>}
                     {(role==="admin"||(role==="partner"&&["sent_irs","itin_received"].includes(selected.product.startsWith("bundle")?selected.itin_status||"":viewOrder(selected).status)))&&(
                       <div className="grid-2">
-                        <input className="partner-select" placeholder="9XX-XX-XXXX" value={itinEntry} onChange={e=>setItinEntry(e.target.value)} />
-                        <input className="partner-select" type="date" value={itinAssignedOn} onChange={e=>setItinAssignedOn(e.target.value)} />
+                        <input className="partner-select" aria-label="Номер ITIN в формате 9XX-XX-XXXX" placeholder="9XX-XX-XXXX" value={itinEntry} onChange={e=>setItinEntry(e.target.value)} />
+                        <input className="partner-select" aria-label="Дата присвоения ITIN" type="date" value={itinAssignedOn} onChange={e=>setItinAssignedOn(e.target.value)} />
                         <button className="btn btn-primary" disabled={busy||!/^9[0-9]{2}-[0-9]{2}-[0-9]{4}$/.test(itinEntry)}
                           onClick={()=>rpc("record_itin",{p_order:selected.id,p_itin:itinEntry,p_assigned_on:itinAssignedOn||null},role==="admin"?"✓ Сохранено и одобрено":"✓ Сохранено")}>
                           Сохранить ITIN
                         </button>
                       </div>
                     )}
+                    {(role==="admin"||(role==="partner"&&["sent_irs","itin_received"].includes(selected.product.startsWith("bundle")?selected.itin_status||"":viewOrder(selected).status)))&&
+                      <p className="step-hint">Формат номера: 9XX-XX-XXXX. Кнопка станет доступной после ввода полного номера.</p>}
                     {role==="admin"&&itinRecord&&!itinRecord.approved&&(
                       <button className="btn btn-success" disabled={busy}
                         onClick={()=>rpc("approve_itin",{p_order:selected.id},"Номер ITIN одобрен; теперь он виден клиенту")}>
