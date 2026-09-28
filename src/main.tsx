@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import { ConsultPanel, CONSULT_ERRORS, type SpecialistProposal } from "./Consult";
-import { ProductPrices, moneyErrorMessage, usd, type PaymentDue, type ProductPrice } from "./Money";
+import { ProductPrices, RenewalPrices, PaymentLines, dueBreakdown, moneyErrorMessage, usd, type PaymentDue, type ProductPrice, type RenewalPrice, type PaymentLine } from "./Money";
 
 const sb = createClient(
   import.meta.env.VITE_SUPABASE_URL || "",
@@ -266,7 +266,7 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
       <div className="login-card">
         <ShieldCheck size={36} color="#4762c9"/>
         <h1>Taxpasso Partners</h1>
-        <p>Кабинет для CAA/CPA и администратора</p>
+        <p>Кабинет для CAA/CPA, специалистов и администратора</p>
         <div className="login-tabs">
           <button className={tab==="sign_in"?"active":""} onClick={()=>{setTab("sign_in");setMsg("");}}>Войти</button>
           <button className={tab==="sign_up"?"active":""} onClick={()=>{setTab("sign_up");setMsg("");}}>Регистрация</button>
@@ -274,7 +274,7 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
         {tab==="sign_up" && <>
           <input aria-label="ФИО" placeholder="ФИО *" value={name} onChange={e=>setName(e.target.value)}/>
           <select className="partner-select" aria-label="Квалификация" value={qual} onChange={e=>setQual(e.target.value)} style={{marginBottom:10}}>
-            <option>CAA</option><option>CPA</option><option>CAA/CPA</option>
+            <option>CAA</option><option>CPA</option><option>CAA/CPA</option><option value="SPECIALIST">Специалист (консультации ITIN)</option>
           </select>
           <textarea className="note-area" aria-label="Коротко о себе" placeholder="Коротко о себе (необязательно)" value={bio} onChange={e=>setBio(e.target.value)} style={{marginBottom:10}}/>
         </>}
@@ -396,7 +396,7 @@ function ApplyForm({ userId, onDone }: { userId: string; onDone: () => void }) {
     <div style={{ textAlign: "left", marginTop: 20 }}>
       <input className="partner-select" placeholder="ФИО *" value={name} onChange={e=>setName(e.target.value)} style={{ marginBottom: 10 }}/>
       <select className="partner-select" value={qual} onChange={e=>setQual(e.target.value)} style={{ marginBottom: 10 }}>
-        <option>CAA</option><option>CPA</option><option>CAA/CPA</option>
+        <option>CAA</option><option>CPA</option><option>CAA/CPA</option><option value="SPECIALIST">Специалист (консультации ITIN)</option>
       </select>
       <textarea className="note-area" placeholder="Коротко о себе (необязательно)" value={bio} onChange={e=>setBio(e.target.value)}/>
       <button className="btn btn-primary btn-full" style={{ marginTop: 10 }} disabled={busy || name.trim().length < 2} onClick={send}>
@@ -495,6 +495,8 @@ function App() {
   const [productPrices, setProductPrices] = useState<ProductPrice[]>([]);
   const [due, setDue] = useState<PaymentDue|null>(null);
   const [paidInput, setPaidInput] = useState("");
+  const [renewalPrices, setRenewalPrices] = useState<RenewalPrice[]>([]);
+  const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
   const { toasts, add: toast } = useToasts();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -540,7 +542,7 @@ function App() {
         await sb.from("partner_applications").insert({
           user_id: user!.id,
           full_name: String(meta.partner_full_name),
-          qualification: ["CAA","CPA","CAA/CPA"].includes(meta.partner_qualification) ? meta.partner_qualification : "CAA",
+          qualification: ["CAA","CPA","CAA/CPA","SPECIALIST"].includes(meta.partner_qualification) ? meta.partner_qualification : "CAA",
           bio: meta.partner_bio ? String(meta.partner_bio) : null,
         });
         ({ data: papp } = await sb.from("partner_applications").select("*").eq("user_id", user!.id).maybeSingle());
@@ -585,6 +587,9 @@ function App() {
   async function loadPrices() {
     const { data, error } = await sb.from("product_prices").select("product,price_cents,updated_at").order("price_cents");
     setProductPrices(error ? [] : (data||[]));
+    // Миграция 021; в базе без неё таблицы нет — экран просто не показывается.
+    const { data: rp, error: rpErr } = await sb.from("renewal_prices").select("state,renewal_cents,state_fee_cents").order("state", { ascending: false });
+    setRenewalPrices(rpErr ? [] : (rp||[]));
   }
   async function loadApplications() {
     const { data } = await sb.from("partner_applications").select("*").order("created_at",{ascending:false});
@@ -623,7 +628,10 @@ function App() {
         const row = !dErr && Array.isArray(d) ? d[0] as PaymentDue : null;
         setDue(row||null); setPaidInput(row ? (row.total_cents/100).toString() : "");
       } else { setDue(null); setPaidInput(""); }
-    } else { setRefunds([]); setAudit([]); setDue(null); }
+      // Всегда запрашиваем: сразу после оплаты состояние orders здесь ещё старое. У неоплаченного заказа строк нет.
+      const { data: pl, error: plErr } = await sb.from("order_payment_lines").select("kind,period_number,amount_cents").eq("order_id",orderId).order("created_at");
+      setPaymentLines(plErr ? [] : (pl as PaymentLine[]||[]));
+    } else { setRefunds([]); setAudit([]); setDue(null); setPaymentLines([]); }
   }
 
   useEffect(() => {
@@ -698,7 +706,7 @@ function App() {
         setTimeout(() => setUpdatedId(null), 1200);
       }
       if (fn.includes("application")) await loadApplications();
-      if (fn==="set_product_price") await loadPrices();
+      if (fn==="set_product_price"||fn==="set_renewal_price") await loadPrices();
       if (fn.includes("partner")&&role==="admin") await loadPartners();
     }
     actionInFlight.current = false;
@@ -783,7 +791,7 @@ function App() {
               <button className={tab==="operations"?"active":""} onClick={()=>setTab("operations")}>
                 <ShieldCheck size={14} style={{marginRight:5,verticalAlign:-2}}/> Operations
               </button>
-              <button className={tab==="applications"?"active":""} onClick={()=>setTab("applications")}>
+              <button className={tab==="applications"?"active":""} onClick={()=>{ setTab("applications"); loadApplications(); }}>
                 <Users size={14} style={{marginRight:5,verticalAlign:-2}}/> Заявки
                 {pendingApps.length>0&&<span className="badge pending-el" style={{marginLeft:5}}>{pendingApps.length}</span>}
               </button>
@@ -854,6 +862,13 @@ function App() {
                 body:"Новая цена сразу применяется к оплате новых и неоплаченных заказов. Сначала обновите цену на сайте, чтобы суммы совпадали.",
                 confirmLabel:"Сохранить цену",
                 onConfirm:()=>rpc("set_product_price",{p_product:product,p_price_cents:cents},"Цена обновлена"),
+              })}/>
+            <RenewalPrices prices={renewalPrices} busy={busy}
+              onSave={(state,renewal,fee)=>setConfirm({
+                title:`${state==="DE"?"Delaware":"Wyoming"}: обслуживание ${usd(renewal)}, госсбор ${usd(fee)} в год?`,
+                body:"Применяется к неоплаченным заказам со сроком 2–3 года. Оплаченные заказы не меняются: их состав зафиксирован.",
+                confirmLabel:"Сохранить",
+                onConfirm:()=>rpc("set_renewal_price",{p_state:state,p_renewal_cents:renewal,p_state_fee_cents:fee},"Цены продления обновлены"),
               })}/>
             {ops.length===0&&<div className="empty-state"><ShieldCheck size={40}/><h2>Нет компаний на обслуживании</h2><p>Закрытые заказы LLC появятся здесь.</p></div>}
             {ops.map(o=>{
@@ -1163,6 +1178,7 @@ function App() {
                     {/* Возврат (admin) */}
                     {role==="admin"&&selected.payment_status==="paid"&&(
                       <div className="action-section">
+                        <PaymentLines lines={paymentLines} state={selected.product.endsWith("_de")?"DE":selected.product.endsWith("_wy")?"WY":null}/>
                         <div className="action-label" id="refund-entry">ВОЗВРАТ СРЕДСТВ</div>
                         {selected.amount_cents!=null&&(()=>{ const r=refunds.reduce((a,x)=>a+x.amount_cents,0);
                           return <div className="step-hint" style={{marginBottom:8}}>Оплачено {usd(selected.amount_cents)}, уже возвращено {usd(r)}, доступно {usd(Math.max(0,selected.amount_cents-r))}</div>; })()}
@@ -1213,7 +1229,7 @@ function App() {
                         {due&&(
                           <>
                             <div className="step-hint" style={{marginBottom:8}}>
-                              К получению: <b>{usd(due.total_cents)}</b> (пакет {usd(due.base_cents)}{due.addons_cents>0?` + услуги ${usd(due.addons_cents)}`:""})
+                              К получению: <b>{usd(due.total_cents)}</b> ({dueBreakdown(due)})
                             </div>
                             <label style={{display:"block",marginBottom:8}}>
                               <span className="step-hint">Получено, $</span>
