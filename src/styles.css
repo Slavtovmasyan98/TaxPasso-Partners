@@ -162,3 +162,8 @@ dd{margin:0;word-break:break-word;font-size:13px}
 /* ── Partner assigned chip ──────────────────────────────── */
 .assigned-chip{display:inline-flex;align-items:center;gap:6px;background:#e9edff;color:#304fc0;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;margin-top:8px}
 .assigned-chip svg{opacity:.7}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.consult-choice{display:flex;align-items:center;gap:10px;border:1px solid #d8dee9;border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:13px;cursor:pointer}
+.consult-choice:focus-within{border-color:#4762c9;box-shadow:0 0 0 3px #4762c922}
+.note-area[aria-invalid="true"],.partner-select[aria-invalid="true"]{border-color:#c43636}
+@media(max-width:640px){header{height:auto;flex-wrap:wrap;gap:8px;padding:10px 16px}header>div:last-child{flex:1 1 100%;flex-wrap:wrap;gap:8px!important;justify-content:space-between}.nav-tabs{flex:1 1 100%;overflow-x:auto}.nav-tabs button{padding:8px 10px;white-space:nowrap}}
