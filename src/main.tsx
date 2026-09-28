@@ -7,6 +7,7 @@ import {
   Upload, Users, XCircle, ClipboardList, UserCheck, X,
 } from "lucide-react";
 import "./styles.css";
+import { ConsultPanel, CONSULT_ERRORS, type SpecialistProposal } from "./Consult";
 
 const sb = createClient(
   import.meta.env.VITE_SUPABASE_URL || "",
@@ -65,11 +66,13 @@ const STATUS: Record<string,string> = {
   ein_requested:"EIN запрошен", ein_received:"EIN получен",
   documents:"Документы", return_prep:"Подготовка декларации", client_signed:"Декларация подписана клиентом",
   caa_interview:"Интервью CAA", sent_irs:"Отправлено в IRS", itin_received:"ITIN получен",
+  consult_interview:"Консультация специалиста",
 };
 const PROD: Record<string,string> = {
   llc_wy:"LLC Wyoming", llc_de:"LLC Delaware",
   itin_standard:"ITIN Standard", itin_return:"ITIN + 1040-NR",
   bundle_wy:"LLC Wyoming + ITIN", bundle_de:"LLC Delaware + ITIN",
+  itin_consult:"Консультация ITIN",
 };
 const DOC_TYPES: Record<string,string> = {
   articles:"Articles of Organization", ein_letter:"Письмо EIN (IRS)",
@@ -449,6 +452,7 @@ function App() {
   const [tab, setTab] = useState<"orders"|"operations"|"applications">("orders");
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [eligibilityProposals, setEligibilityProposals] = useState<EligibilityProposal[]>([]);
+  const [specialistProposals, setSpecialistProposals] = useState<SpecialistProposal[]>([]);
   const [pendingReviewOrderIds, setPendingReviewOrderIds] = useState<string[]>([]);
   const [itinRecord, setItinRecord] = useState<ItinRecord|null>(null);
   const [itinEntry, setItinEntry] = useState("");
@@ -541,12 +545,13 @@ function App() {
   }
 
   async function loadOrders(activeRole: Role = role) {
-    const [{ data: pr }, { data: ep }, { data: cos }] = await Promise.all([
+    const [{ data: pr }, { data: ep }, { data: cos }, { data: sp }] = await Promise.all([
       sb.from("status_proposals").select("*"),
       sb.from("eligibility_proposals").select("*"),
       sb.from("companies").select("*"),
+      sb.from("specialist_proposals").select("*"),
     ]);
-    setProposals(pr||[]); setEligibilityProposals(ep||[]); setAllCompanies(cos||[]);
+    setProposals(pr||[]); setEligibilityProposals(ep||[]); setAllCompanies(cos||[]); setSpecialistProposals(sp||[]);
     if (activeRole==="admin") {
       const { data: reviewQueue } = await sb.from("document_review_proposals").select("order_id");
       setPendingReviewOrderIds((reviewQueue||[]).map(p=>p.order_id));
@@ -636,6 +641,7 @@ function App() {
         "Too many attempts":"Превышено число попыток подачи",
         "Document replaced":"Документ уже заменён клиентом",
         "No proposal":"Предложение уже обработано — обновите страницу",
+        ...CONSULT_ERRORS,
       };
       toast("error", messages[error.message] || (error.message==="Payment required" ? (role==="partner"?"Заказ ещё не передан в работу":"Сначала нужна оплата") :
         error.message==="Eligibility approval required" ? "Сначала подтвердите основание ITIN" :
@@ -730,6 +736,11 @@ function App() {
   if (app?.status==="rejected") return <PendingScreen app={app}/>;
 
   const pendingApps = applications.filter(a=>a.status==="pending");
+  // После одобрения консультации заказ становится обычным ITIN, но специалист остаётся назначен,
+  // пока админ не передаст его CAA/CPA. Специалисту в это время действия ITIN не показываем.
+  const selectedPartnerIsSpecialist = !!selected && partners.find(p=>p.id===selected.partner_id)?.qualification==="SPECIALIST";
+  const specialistHandoff = role==="partner" && !!selected && selected.product!=="itin_consult" && selectedPartnerIsSpecialist
+    && partners.find(p=>p.id===selected.partner_id)?.profile_id===user.id;
 
   return (
     <div className="shell">
@@ -867,15 +878,16 @@ function App() {
                 <small>{PROD[o.product]||o.product} · {STATUS[viewOrder(o).status]||o.status}</small>
                 <div className="badges">
                   {o.cancelled_at ? <span className="badge pending-el">Отменён</span> : o.closed_at&&<span className="badge approved-el">Закрыт</span>}
-                  {role==="admin"&&(proposals.some(p=>p.order_id===o.id)||eligibilityProposals.some(p=>p.order_id===o.id)||pendingReviewOrderIds.includes(o.id))&&(
+                  {role==="admin"&&(proposals.some(p=>p.order_id===o.id)||eligibilityProposals.some(p=>p.order_id===o.id)||specialistProposals.some(p=>p.order_id===o.id)||pendingReviewOrderIds.includes(o.id))&&(
                     <span className="badge doc-review">Ждёт вашего подтверждения</span>
                   )}
-                  {role==="admin" ? <span className={`badge ${o.payment_status==="paid"?"paid":"unpaid"}`}>
+                  {o.product==="itin_consult" ? <span className="badge status">Консультация{role==="admin"&&!o.partner_id&&!o.closed_at&&o.status!=="draft"?" · нужен специалист":""}</span> :
+                  role==="admin" ? <span className={`badge ${o.payment_status==="paid"?"paid":"unpaid"}`}>
                     {o.payment_status==="paid"?"Оплачено":"Ожидает оплаты"}
                   </span> : <span className={`badge ${o.in_work?"paid":"unpaid"}`}>
                     {o.in_work?"В работе":"Ожидает передачи в работу"}
                   </span>}
-                  {(o.product.includes("itin")||o.product.includes("bundle"))&&(
+                  {o.product!=="itin_consult"&&(o.product.includes("itin")||o.product.includes("bundle"))&&(
                     <span className={`badge ${o.eligibility==="approved"?"approved-el":o.eligibility==="rejected"?"pending-el":"unpaid"}`}>
                       ITIN: {o.eligibility==="approved"?"✓ Одобрен":o.eligibility==="rejected"?"✗ Отклонён":"На проверке"}
                     </span>
@@ -916,6 +928,16 @@ function App() {
                   </div>
                 ))}
 
+                {selected.product==="itin_consult" ? (
+                  <ConsultPanel order={selected} role={role as "admin"|"partner"} partners={partners}
+                    proposal={specialistProposals.find(p=>p.order_id===selected.id)||null}
+                    busy={busy} rpc={rpc} askConfirm={setConfirm}/>
+                ) : specialistHandoff ? (
+                  <div className="alert info"><CheckCircle2 size={16}/> Консультация завершена: администратор подтвердил план «{PROD[selected.product]||selected.product}». Заказ передаётся партнёру CAA/CPA, действий для специалиста нет.</div>
+                ) : (<>
+                {role==="admin"&&selectedPartnerIsSpecialist&&(
+                  <div className="alert warn"><AlertCircle size={16}/> После консультации назначен специалист. Назначьте {selected.product==="itin_return"?"партнёра CAA/CPA":"партнёра CAA или CAA/CPA"} в блоке «Назначить CAA/CPA».</div>
+                )}
                 {/* Status tracker */}
                 <StatusTracker order={viewOrder(selected)}/>
 
@@ -1183,7 +1205,7 @@ function App() {
                         <select className="partner-select" value={selectedPartner}
                           onChange={e=>setSelectedPartner(e.target.value)}>
                           <option value="">— выберите специалиста —</option>
-                          {partners.filter(p=>selected.product==="itin_return"?p.qualification==="CAA/CPA":selected.product==="itin_standard"||selected.product.startsWith("bundle")?p.qualification==="CAA"||p.qualification==="CAA/CPA":true).map(p=>(
+                          {partners.filter(p=>p.qualification!=="SPECIALIST").filter(p=>selected.product==="itin_return"?p.qualification==="CAA/CPA":selected.product==="itin_standard"||selected.product.startsWith("bundle")?p.qualification==="CAA"||p.qualification==="CAA/CPA":true).map(p=>(
                             <option key={p.id} value={p.id}>{p.display_name} · {p.qualification}</option>
                           ))}
                         </select>
@@ -1481,6 +1503,8 @@ function App() {
                   )}
                 </div>
 
+                </>)}
+
                 {/* Audit (admin) */}
                 {role==="admin"&&(
                   <div className="card" style={{marginBottom:18}}>
@@ -1488,7 +1512,8 @@ function App() {
                     {audit.length===0&&<p style={{color:"#94a3b8",fontSize:13}}>Записей нет</p>}
                     {audit.map(a=>{
                       const nv=(a.new_value||{}) as Record<string,unknown>; const ov=(a.old_value||{}) as Record<string,unknown>;
-                      const what = a.entity==="orders" ? (nv.status!==ov.status?`статус: ${STATUS[String(ov.status)]||ov.status||"—"} → ${STATUS[String(nv.status)]||nv.status}`
+                      const what = a.entity==="orders" ? (nv.product!==ov.product&&ov.product?`продукт: ${PROD[String(ov.product)]||ov.product} → ${PROD[String(nv.product)]||nv.product}`
+                          : nv.status!==ov.status?`статус: ${STATUS[String(ov.status)]||ov.status||"—"} → ${STATUS[String(nv.status)]||nv.status}`
                           : nv.partner_id!==ov.partner_id?"смена партнёра" : nv.payment_status!==ov.payment_status?`оплата: ${nv.payment_status}`
                           : nv.cancelled_at&&!ov.cancelled_at?"отмена" : nv.eligibility!==ov.eligibility?`ITIN: ${nv.eligibility}` : nv.closed_at&&!ov.closed_at?"закрытие":"изменение заказа")
                         : a.entity==="status_proposals" ? (a.action==="delete"?"прогресс партнёра сброшен/подтверждён":`партнёр: ${STATUS[String(nv.proposed_status)]||nv.proposed_status}`)
@@ -1496,7 +1521,8 @@ function App() {
                         : a.entity==="documents" ? (nv.superseded_at&&!ov.superseded_at?"документ клиента заменён":`документ клиента: ${nv.review_status}`)
                         : a.entity==="companies" ? (nv.approved&&!ov.approved?"данные компании одобрены":"данные компании")
                         : a.entity==="order_refunds" ? `возврат $${(Number(nv.amount_cents)/100).toFixed(2)}`
-                        : a.entity==="order_milestones" ? "факт подачи" : `${a.entity}: ${a.action}`;
+                        : a.entity==="order_milestones" ? "факт подачи"
+                        : a.entity==="specialist_proposals" ? (a.action==="delete"?"предложение специалиста обработано":`специалист предлагает: ${nv.decision==="approve"?`одобрить → ${PROD[String(nv.recommended_product)]||nv.recommended_product}`:"отказать"}`) : `${a.entity}: ${a.action}`;
                       return (
                         <div className="history-row" key={a.id}>
                           <span>{what}{a.reason?` · «${a.reason}»`:""} <span style={{color:"#94a3b8"}}>· {a.actor_role||"система"}</span></span>
