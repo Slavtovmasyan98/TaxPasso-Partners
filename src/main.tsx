@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import { ConsultPanel, CONSULT_ERRORS, type SpecialistProposal } from "./Consult";
+import { ProductPrices, moneyErrorMessage, usd, type PaymentDue, type ProductPrice } from "./Money";
 
 const sb = createClient(
   import.meta.env.VITE_SUPABASE_URL || "",
@@ -24,6 +25,7 @@ type Order = {
   order_status_history?: { status: string; created_at: string }[];
   service_years?: number; closed_at?: string | null; service_until?: string | null;
   cancelled_at?: string | null; cancel_reason?: string | null;
+  amount_cents?: number | null;
 };
 type Milestone = { order_id: string; milestone: string; recorded_at: string; partner_id?: string | null };
 type Refund = { id: string; order_id: string; amount_cents: number; scope: string; reason: string; created_at: string };
@@ -489,6 +491,10 @@ function App() {
   const [refundAmount, setRefundAmount] = useState("");
   const [refundScope, setRefundScope] = useState("order");
   const [refundReason, setRefundReason] = useState("");
+  // Миграция 020: должная сумма и цены продуктов. null — база ещё без 020, работаем по-старому.
+  const [productPrices, setProductPrices] = useState<ProductPrice[]>([]);
+  const [due, setDue] = useState<PaymentDue|null>(null);
+  const [paidInput, setPaidInput] = useState("");
   const { toasts, add: toast } = useToasts();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -526,7 +532,7 @@ function App() {
     if (r==="admin"||r==="partner") {
       await loadOrders(r);
       await loadPartners();
-      if (r==="admin") await loadApplications();
+      if (r==="admin") { await loadApplications(); await loadPrices(); }
     } else {
       let { data: papp } = await sb.from("partner_applications").select("*").eq("user_id", user!.id).maybeSingle();
       const meta = user!.user_metadata || {};
@@ -576,6 +582,10 @@ function App() {
     const { data } = await sb.from("partners").select("*");
     setPartners(data||[]);
   }
+  async function loadPrices() {
+    const { data, error } = await sb.from("product_prices").select("product,price_cents,updated_at").order("price_cents");
+    setProductPrices(error ? [] : (data||[]));
+  }
   async function loadApplications() {
     const { data } = await sb.from("partner_applications").select("*").order("created_at",{ascending:false});
     setApplications(data||[]);
@@ -607,7 +617,13 @@ function App() {
         sb.from("audit_log").select("*").eq("order_id",orderId).order("at",{ascending:false}).limit(50),
       ]);
       setRefunds(rf.data||[]); setAudit(au.data||[]);
-    } else { setRefunds([]); setAudit([]); }
+      const order = orders.find(o=>o.id===orderId);
+      if (order && order.payment_status!=="paid" && order.product!=="itin_consult") {
+        const { data: d, error: dErr } = await sb.rpc("order_payment_due", { p_order: orderId });
+        const row = !dErr && Array.isArray(d) ? d[0] as PaymentDue : null;
+        setDue(row||null); setPaidInput(row ? (row.total_cents/100).toString() : "");
+      } else { setDue(null); setPaidInput(""); }
+    } else { setRefunds([]); setAudit([]); setDue(null); }
   }
 
   useEffect(() => {
@@ -627,7 +643,14 @@ function App() {
     const { data, error } = await sb.rpc(fn, args);
     if (error && error.message==="Status changed") { await loadOrders(); }
     if (error) {
+      const money = moneyErrorMessage(error.message, (error as { details?: string }).details);
       const messages: Record<string,string> = {
+        ...(money ? { [error.message]: money } : {}),
+        "Operation id reused":"Действие уже обработано, обновите страницу",
+        "Field too long":"Слишком длинное значение (имя ≤ 200, страна ≤ 100, компания ≤ 200, деятельность ≤ 1000)",
+        "Invalid characters":"Уберите символы < и >",
+        "Order setup incomplete":"Анкета не заполнена: владельцы, доли 100%, ответственный, данные компании, паспорта",
+        "Invalid partner":"Этот партнёр не подходит для заказа",
         "Not released": role==="partner"?"Заказ ещё не передан в работу":"Заказ не оплачен",
         "Partner ITIN required":"Внесите номер ITIN",
         "Partner ITIN letter required":"Загрузите и отправьте письмо IRS (CP565)",
@@ -675,6 +698,7 @@ function App() {
         setTimeout(() => setUpdatedId(null), 1200);
       }
       if (fn.includes("application")) await loadApplications();
+      if (fn==="set_product_price") await loadPrices();
       if (fn.includes("partner")&&role==="admin") await loadPartners();
     }
     actionInFlight.current = false;
@@ -824,6 +848,13 @@ function App() {
           .sort((a,b)=>(a.service_until||"").localeCompare(b.service_until||""));
         return (
           <div className="app-list">
+            <ProductPrices prices={productPrices} names={PROD} busy={busy}
+              onSave={(product,cents)=>setConfirm({
+                title:`Цена ${PROD[product]||product}: ${usd(cents)}?`,
+                body:"Новая цена сразу применяется к оплате новых и неоплаченных заказов. Сначала обновите цену на сайте, чтобы суммы совпадали.",
+                confirmLabel:"Сохранить цену",
+                onConfirm:()=>rpc("set_product_price",{p_product:product,p_price_cents:cents},"Цена обновлена"),
+              })}/>
             {ops.length===0&&<div className="empty-state"><ShieldCheck size={40}/><h2>Нет компаний на обслуживании</h2><p>Закрытые заказы LLC появятся здесь.</p></div>}
             {ops.map(o=>{
               const co = allCompanies.find(c=>c.order_id===o.id);
@@ -1133,10 +1164,15 @@ function App() {
                     {role==="admin"&&selected.payment_status==="paid"&&(
                       <div className="action-section">
                         <div className="action-label" id="refund-entry">ВОЗВРАТ СРЕДСТВ</div>
+                        {selected.amount_cents!=null&&(()=>{ const r=refunds.reduce((a,x)=>a+x.amount_cents,0);
+                          return <div className="step-hint" style={{marginBottom:8}}>Оплачено {usd(selected.amount_cents)}, уже возвращено {usd(r)}, доступно {usd(Math.max(0,selected.amount_cents-r))}</div>; })()}
                         <div style={{display:"flex",gap:8}}>
                           <input className="partner-select" aria-label="Сумма возврата в долларах" style={{flex:1}} type="number" min={1} step="0.01" placeholder="Сумма, $" value={refundAmount} onChange={e=>setRefundAmount(e.target.value)}/>
                           <select className="partner-select" aria-label="Часть заказа для возврата" style={{flex:1}} value={refundScope} onChange={e=>setRefundScope(e.target.value)}>
-                            <option value="order">Весь заказ</option><option value="llc">LLC</option><option value="itin">ITIN</option><option value="other">Другое</option>
+                            <option value="order">Весь заказ</option>
+                            {(selected.product.startsWith("llc")||selected.product.startsWith("bundle"))&&<option value="llc">LLC</option>}
+                            {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&<option value="itin">ITIN</option>}
+                            <option value="other">Другое</option>
                           </select>
                         </div>
                         <textarea className="note-area" aria-label="Причина и расчёт возврата" placeholder="Причина и расчёт возврата *" value={refundReason} onChange={e=>setRefundReason(e.target.value)}/>
@@ -1174,15 +1210,31 @@ function App() {
                         <div className="action-label">ОПЛАТА</div>
                         {(()=>{ const gated=selected.product.startsWith("itin")&&selected.eligibility!=="approved";
                           return gated ? <div className="step-hint" style={{marginBottom:8}}>Оплату можно отметить только после одобрения основания ITIN. Сейчас: {selected.eligibility==="rejected"?"отклонено":"на проверке"}.</div> : null; })()}
+                        {due&&(
+                          <>
+                            <div className="step-hint" style={{marginBottom:8}}>
+                              К получению: <b>{usd(due.total_cents)}</b> (пакет {usd(due.base_cents)}{due.addons_cents>0?` + услуги ${usd(due.addons_cents)}`:""})
+                            </div>
+                            <label style={{display:"block",marginBottom:8}}>
+                              <span className="step-hint">Получено, $</span>
+                              <input className="partner-select" type="number" min={0} step="0.01" aria-label="Получено, $"
+                                value={paidInput} onChange={e=>setPaidInput(e.target.value)}/>
+                            </label>
+                          </>
+                        )}
                         <button className="btn btn-primary btn-full"
-                          disabled={busy||(selected.product.startsWith("itin")&&selected.eligibility!=="approved")}
+                          disabled={busy||(selected.product.startsWith("itin")&&selected.eligibility!=="approved")||(!!due&&!(Number(paidInput)>0))}
                           onClick={()=>{
                             const note=prompt("Комментарий к оплате (необязательно)")||"";
+                            const cents = due ? Math.round(Number(paidInput)*100) : null;
                             setConfirm({
-                              title:"Отметить оплату вручную?",
+                              title: cents!==null ? `Отметить оплату ${usd(cents)}?` : "Отметить оплату вручную?",
                               body:"Убедитесь, что перевод получен. Это действие нельзя отменить.",
                               confirmLabel:"Отметить оплату",
-                              onConfirm:()=>rpc("mark_order_paid_manually",{p_order:selected.id,p_note:note},"Оплата отмечена")
+                              // С миграцией 020 — всегда форма с суммой; без неё (старая база) — прежний вызов.
+                              onConfirm:()=>rpc("mark_order_paid_manually",
+                                cents!==null ? {p_order:selected.id,p_note:note,p_amount_cents:cents} : {p_order:selected.id,p_note:note},
+                                "Оплата отмечена")
                             });
                           }}>
                           <CheckCircle2 size={15}/> Отметить оплату

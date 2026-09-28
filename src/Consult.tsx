@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, Check, CheckCircle2, MessageCircle, Send, UserCheck, XCircle } from "lucide-react";
 
 // Консультация специалиста (docs/UI_SPEC_016_017.md в репозитории TaxPasso).
@@ -32,6 +32,7 @@ export const CONSULT_ERRORS: Record<string, string> = {
   "Partner must be a Specialist": "Для консультации назначьте специалиста",
   "Recommended product must be itin_standard or itin_return": "Выберите ITIN Standard или ITIN + 1040-NR",
   "Invalid decision": "Выберите решение",
+  "Invalid contact value": "Контакт клиента некорректен",
 };
 
 function contactLink(method?: string, value?: string): string | null {
@@ -68,10 +69,9 @@ export function ConsultPanel({
   const specialists = partners.filter(p => p.qualification === "SPECIALIST");
   const assigned = partners.find(p => p.id === order.partner_id);
 
-  // Один ключ идемпотентности на операцию: повторный клик/повтор после сбоя сети не создаёт второе действие.
-  const opKey = useRef<Record<string, string>>({});
-  const op = (name: string) => (opKey.current[name] ||= crypto.randomUUID());
-  useEffect(() => { opKey.current = {}; }, [order.id, proposal?.proposed_at, order.closed_at, order.product]);
+  // Правило 019: новый op_id на каждое нажатие. Двойной клик отсекает общий rpc() (одно действие за раз),
+  // а сервер отвечает already_done на честный повтор и «Operation id reused» на чужой ключ.
+  const op = (_name: string) => crypto.randomUUID();
 
   const [decision, setDecision] = useState<"" | "approve" | "reject">("");
   const [product, setProduct] = useState("");
