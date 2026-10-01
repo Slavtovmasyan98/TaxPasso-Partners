@@ -7,6 +7,9 @@ import {
   Upload, Users, XCircle, ClipboardList, UserCheck, X,
 } from "lucide-react";
 import "./styles.css";
+import { OrderLedgerEntry, ReviewState, AdminFinance } from "./components/OrderPresentation";
+import { ConsultPanel, CONSULT_ERRORS, type SpecialistProposal } from "./Consult";
+import { ProductPrices, RenewalPrices, PaymentLines, dueBreakdown, moneyErrorMessage, usd, type PaymentDue, type ProductPrice, type RenewalPrice, type PaymentLine } from "./Money";
 
 const sb = createClient(
   import.meta.env.VITE_SUPABASE_URL || "",
@@ -23,6 +26,7 @@ type Order = {
   order_status_history?: { status: string; created_at: string }[];
   service_years?: number; closed_at?: string | null; service_until?: string | null;
   cancelled_at?: string | null; cancel_reason?: string | null;
+  amount_cents?: number | null;
 };
 type Milestone = { order_id: string; milestone: string; recorded_at: string; partner_id?: string | null };
 type Refund = { id: string; order_id: string; amount_cents: number; scope: string; reason: string; created_at: string };
@@ -65,11 +69,13 @@ const STATUS: Record<string,string> = {
   ein_requested:"EIN запрошен", ein_received:"EIN получен",
   documents:"Документы", return_prep:"Подготовка декларации", client_signed:"Декларация подписана клиентом",
   caa_interview:"Интервью CAA", sent_irs:"Отправлено в IRS", itin_received:"ITIN получен",
+  consult_interview:"Консультация специалиста",
 };
 const PROD: Record<string,string> = {
   llc_wy:"LLC Wyoming", llc_de:"LLC Delaware",
   itin_standard:"ITIN Standard", itin_return:"ITIN + 1040-NR",
   bundle_wy:"LLC Wyoming + ITIN", bundle_de:"LLC Delaware + ITIN",
+  itin_consult:"Консультация ITIN",
 };
 const DOC_TYPES: Record<string,string> = {
   articles:"Articles of Organization", ein_letter:"Письмо EIN (IRS)",
@@ -193,7 +199,7 @@ function StatusTracker({ order }: { order: Order }) {
       {/* ITIN bundle */}
       {order.itin_status && (
         <div style={{marginTop:12}}>
-          <div className="action-label">ITIN ПОТОК</div>
+          <div className="action-label">Процесс ITIN</div>
           <div className="tracker-steps">
             {ITIN_CHAIN.map((s, i) => {
               const cur = ITIN_CHAIN.indexOf(order.itin_status!);
@@ -261,7 +267,7 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
       <div className="login-card">
         <ShieldCheck size={36} color="#4762c9"/>
         <h1>Taxpasso Partners</h1>
-        <p>Кабинет для CAA/CPA и администратора</p>
+        <p>Кабинет для CAA/CPA, специалистов и администратора</p>
         <div className="login-tabs">
           <button className={tab==="sign_in"?"active":""} onClick={()=>{setTab("sign_in");setMsg("");}}>Войти</button>
           <button className={tab==="sign_up"?"active":""} onClick={()=>{setTab("sign_up");setMsg("");}}>Регистрация</button>
@@ -269,7 +275,7 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
         {tab==="sign_up" && <>
           <input aria-label="ФИО" placeholder="ФИО *" value={name} onChange={e=>setName(e.target.value)}/>
           <select className="partner-select" aria-label="Квалификация" value={qual} onChange={e=>setQual(e.target.value)} style={{marginBottom:10}}>
-            <option>CAA</option><option>CPA</option><option>CAA/CPA</option>
+            <option>CAA</option><option>CPA</option><option>CAA/CPA</option><option value="SPECIALIST">Специалист (консультации ITIN)</option>
           </select>
           <textarea className="note-area" aria-label="Коротко о себе" placeholder="Коротко о себе (необязательно)" value={bio} onChange={e=>setBio(e.target.value)} style={{marginBottom:10}}/>
         </>}
@@ -391,7 +397,7 @@ function ApplyForm({ userId, onDone }: { userId: string; onDone: () => void }) {
     <div style={{ textAlign: "left", marginTop: 20 }}>
       <input className="partner-select" placeholder="ФИО *" value={name} onChange={e=>setName(e.target.value)} style={{ marginBottom: 10 }}/>
       <select className="partner-select" value={qual} onChange={e=>setQual(e.target.value)} style={{ marginBottom: 10 }}>
-        <option>CAA</option><option>CPA</option><option>CAA/CPA</option>
+        <option>CAA</option><option>CPA</option><option>CAA/CPA</option><option value="SPECIALIST">Специалист (консультации ITIN)</option>
       </select>
       <textarea className="note-area" placeholder="Коротко о себе (необязательно)" value={bio} onChange={e=>setBio(e.target.value)}/>
       <button className="btn btn-primary btn-full" style={{ marginTop: 10 }} disabled={busy || name.trim().length < 2} onClick={send}>
@@ -449,6 +455,7 @@ function App() {
   const [tab, setTab] = useState<"orders"|"operations"|"applications">("orders");
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [eligibilityProposals, setEligibilityProposals] = useState<EligibilityProposal[]>([]);
+  const [specialistProposals, setSpecialistProposals] = useState<SpecialistProposal[]>([]);
   const [pendingReviewOrderIds, setPendingReviewOrderIds] = useState<string[]>([]);
   const [itinRecord, setItinRecord] = useState<ItinRecord|null>(null);
   const [itinEntry, setItinEntry] = useState("");
@@ -485,6 +492,12 @@ function App() {
   const [refundAmount, setRefundAmount] = useState("");
   const [refundScope, setRefundScope] = useState("order");
   const [refundReason, setRefundReason] = useState("");
+  // Миграция 020: должная сумма и цены продуктов. null — база ещё без 020, работаем по-старому.
+  const [productPrices, setProductPrices] = useState<ProductPrice[]>([]);
+  const [due, setDue] = useState<PaymentDue|null>(null);
+  const [paidInput, setPaidInput] = useState("");
+  const [renewalPrices, setRenewalPrices] = useState<RenewalPrice[]>([]);
+  const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
   const { toasts, add: toast } = useToasts();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -522,7 +535,7 @@ function App() {
     if (r==="admin"||r==="partner") {
       await loadOrders(r);
       await loadPartners();
-      if (r==="admin") await loadApplications();
+      if (r==="admin") { await loadApplications(); await loadPrices(); }
     } else {
       let { data: papp } = await sb.from("partner_applications").select("*").eq("user_id", user!.id).maybeSingle();
       const meta = user!.user_metadata || {};
@@ -530,7 +543,7 @@ function App() {
         await sb.from("partner_applications").insert({
           user_id: user!.id,
           full_name: String(meta.partner_full_name),
-          qualification: ["CAA","CPA","CAA/CPA"].includes(meta.partner_qualification) ? meta.partner_qualification : "CAA",
+          qualification: ["CAA","CPA","CAA/CPA","SPECIALIST"].includes(meta.partner_qualification) ? meta.partner_qualification : "CAA",
           bio: meta.partner_bio ? String(meta.partner_bio) : null,
         });
         ({ data: papp } = await sb.from("partner_applications").select("*").eq("user_id", user!.id).maybeSingle());
@@ -541,12 +554,13 @@ function App() {
   }
 
   async function loadOrders(activeRole: Role = role) {
-    const [{ data: pr }, { data: ep }, { data: cos }] = await Promise.all([
+    const [{ data: pr }, { data: ep }, { data: cos }, { data: sp }] = await Promise.all([
       sb.from("status_proposals").select("*"),
       sb.from("eligibility_proposals").select("*"),
       sb.from("companies").select("*"),
+      sb.from("specialist_proposals").select("*"),
     ]);
-    setProposals(pr||[]); setEligibilityProposals(ep||[]); setAllCompanies(cos||[]);
+    setProposals(pr||[]); setEligibilityProposals(ep||[]); setAllCompanies(cos||[]); setSpecialistProposals(sp||[]);
     if (activeRole==="admin") {
       const { data: reviewQueue } = await sb.from("document_review_proposals").select("order_id");
       setPendingReviewOrderIds((reviewQueue||[]).map(p=>p.order_id));
@@ -570,6 +584,13 @@ function App() {
   async function loadPartners() {
     const { data } = await sb.from("partners").select("*");
     setPartners(data||[]);
+  }
+  async function loadPrices() {
+    const { data, error } = await sb.from("product_prices").select("product,price_cents,updated_at").order("price_cents");
+    setProductPrices(error ? [] : (data||[]));
+    // Миграция 021; в базе без неё таблицы нет — экран просто не показывается.
+    const { data: rp, error: rpErr } = await sb.from("renewal_prices").select("state,renewal_cents,state_fee_cents").order("state", { ascending: false });
+    setRenewalPrices(rpErr ? [] : (rp||[]));
   }
   async function loadApplications() {
     const { data } = await sb.from("partner_applications").select("*").order("created_at",{ascending:false});
@@ -602,7 +623,16 @@ function App() {
         sb.from("audit_log").select("*").eq("order_id",orderId).order("at",{ascending:false}).limit(50),
       ]);
       setRefunds(rf.data||[]); setAudit(au.data||[]);
-    } else { setRefunds([]); setAudit([]); }
+      const order = orders.find(o=>o.id===orderId);
+      if (order && order.payment_status!=="paid" && order.product!=="itin_consult") {
+        const { data: d, error: dErr } = await sb.rpc("order_payment_due", { p_order: orderId });
+        const row = !dErr && Array.isArray(d) ? d[0] as PaymentDue : null;
+        setDue(row||null); setPaidInput(row ? (row.total_cents/100).toString() : "");
+      } else { setDue(null); setPaidInput(""); }
+      // Всегда запрашиваем: сразу после оплаты состояние orders здесь ещё старое. У неоплаченного заказа строк нет.
+      const { data: pl, error: plErr } = await sb.from("order_payment_lines").select("kind,period_number,amount_cents").eq("order_id",orderId).order("created_at");
+      setPaymentLines(plErr ? [] : (pl as PaymentLine[]||[]));
+    } else { setRefunds([]); setAudit([]); setDue(null); setPaymentLines([]); }
   }
 
   useEffect(() => {
@@ -622,7 +652,14 @@ function App() {
     const { data, error } = await sb.rpc(fn, args);
     if (error && error.message==="Status changed") { await loadOrders(); }
     if (error) {
+      const money = moneyErrorMessage(error.message, (error as { details?: string }).details);
       const messages: Record<string,string> = {
+        ...(money ? { [error.message]: money } : {}),
+        "Operation id reused":"Действие уже обработано, обновите страницу",
+        "Field too long":"Слишком длинное значение (имя ≤ 200, страна ≤ 100, компания ≤ 200, деятельность ≤ 1000)",
+        "Invalid characters":"Уберите символы < и >",
+        "Order setup incomplete":"Анкета не заполнена: владельцы, доли 100%, ответственный, данные компании, паспорта",
+        "Invalid partner":"Этот партнёр не подходит для заказа",
         "Not released": role==="partner"?"Заказ ещё не передан в работу":"Заказ не оплачен",
         "Partner ITIN required":"Внесите номер ITIN",
         "Partner ITIN letter required":"Загрузите и отправьте письмо IRS (CP565)",
@@ -636,6 +673,7 @@ function App() {
         "Too many attempts":"Превышено число попыток подачи",
         "Document replaced":"Документ уже заменён клиентом",
         "No proposal":"Предложение уже обработано — обновите страницу",
+        ...CONSULT_ERRORS,
       };
       toast("error", messages[error.message] || (error.message==="Payment required" ? (role==="partner"?"Заказ ещё не передан в работу":"Сначала нужна оплата") :
         error.message==="Eligibility approval required" ? "Сначала подтвердите основание ITIN" :
@@ -669,6 +707,7 @@ function App() {
         setTimeout(() => setUpdatedId(null), 1200);
       }
       if (fn.includes("application")) await loadApplications();
+      if (fn==="set_product_price"||fn==="set_renewal_price") await loadPrices();
       if (fn.includes("partner")&&role==="admin") await loadPartners();
     }
     actionInFlight.current = false;
@@ -730,15 +769,21 @@ function App() {
   if (app?.status==="rejected") return <PendingScreen app={app}/>;
 
   const pendingApps = applications.filter(a=>a.status==="pending");
+  // После одобрения консультации заказ становится обычным ITIN, но специалист остаётся назначен,
+  // пока админ не передаст его CAA/CPA. Специалисту в это время действия ITIN не показываем.
+  const selectedPartnerIsSpecialist = !!selected && partners.find(p=>p.id===selected.partner_id)?.qualification==="SPECIALIST";
+  const specialistHandoff = role==="partner" && !!selected && selected.product!=="itin_consult" && selectedPartnerIsSpecialist
+    && partners.find(p=>p.id===selected.partner_id)?.profile_id===user.id;
 
   return (
     <div className="shell">
+      {tab==="orders"&&<a className="skip-link" href="#order-detail">Перейти к заказу</a>}
       <Toasts toasts={toasts}/>
       {showMfa&&<MfaSetup onClose={()=>setShowMfa(false)}/>}
       {confirm && <ConfirmDialog c={confirm} onCancel={()=>setConfirm(null)}/>}
 
       <header>
-        <div className="brand">Taxpasso <span>PARTNERS</span></div>
+        <div className="brand">Taxpasso <span>Partners</span></div>
         <div style={{display:"flex",alignItems:"center",gap:16}}>
           {role==="admin" && (
             <div className="nav-tabs">
@@ -746,16 +791,16 @@ function App() {
                 <ClipboardList size={14} style={{marginRight:5,verticalAlign:-2}}/> Заказы
               </button>
               <button className={tab==="operations"?"active":""} onClick={()=>setTab("operations")}>
-                <ShieldCheck size={14} style={{marginRight:5,verticalAlign:-2}}/> Operations
+                <ShieldCheck size={14} style={{marginRight:5,verticalAlign:-2}}/> Управление
               </button>
-              <button className={tab==="applications"?"active":""} onClick={()=>setTab("applications")}>
+              <button className={tab==="applications"?"active":""} onClick={()=>{ setTab("applications"); loadApplications(); }}>
                 <Users size={14} style={{marginRight:5,verticalAlign:-2}}/> Заявки
                 {pendingApps.length>0&&<span className="badge pending-el" style={{marginLeft:5}}>{pendingApps.length}</span>}
               </button>
             </div>
           )}
           <button className="icon-btn" title="Двухфакторная защита" onClick={()=>setShowMfa(true)}><ShieldCheck size={17}/></button>
-          <span className="role-badge">{role.toUpperCase()}</span>
+          <span className="role-badge">{role==="admin"?"Администратор":"Партнёр"}</span>
           <button className="icon-btn" onClick={()=>sb.auth.signOut()} title="Выйти"><LogOut size={17}/></button>
         </div>
       </header>
@@ -813,6 +858,20 @@ function App() {
           .sort((a,b)=>(a.service_until||"").localeCompare(b.service_until||""));
         return (
           <div className="app-list">
+            <ProductPrices prices={productPrices} names={PROD} busy={busy}
+              onSave={(product,cents)=>setConfirm({
+                title:`Цена ${PROD[product]||product}: ${usd(cents)}?`,
+                body:"Новая цена сразу применяется к оплате новых и неоплаченных заказов. Сначала обновите цену на сайте, чтобы суммы совпадали.",
+                confirmLabel:"Сохранить цену",
+                onConfirm:()=>rpc("set_product_price",{p_product:product,p_price_cents:cents},"Цена обновлена"),
+              })}/>
+            <RenewalPrices prices={renewalPrices} busy={busy}
+              onSave={(state,renewal,fee)=>setConfirm({
+                title:`${state==="DE"?"Delaware":"Wyoming"}: обслуживание ${usd(renewal)}, госсбор ${usd(fee)} в год?`,
+                body:"Применяется к неоплаченным заказам со сроком 2–3 года. Оплаченные заказы не меняются: их состав зафиксирован.",
+                confirmLabel:"Сохранить",
+                onConfirm:()=>rpc("set_renewal_price",{p_state:state,p_renewal_cents:renewal,p_state_fee_cents:fee},"Цены продления обновлены"),
+              })}/>
             {ops.length===0&&<div className="empty-state"><ShieldCheck size={40}/><h2>Нет компаний на обслуживании</h2><p>Закрытые заказы LLC появятся здесь.</p></div>}
             {ops.map(o=>{
               const co = allCompanies.find(c=>c.order_id===o.id);
@@ -842,7 +901,7 @@ function App() {
         <div className="workspace">
           <aside>
             <div className="aside-header">
-              <span className="aside-title">ЗАКАЗЫ</span>
+              <span className="aside-title">Реестр заказов</span>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <span className="aside-count">{orders.length}</span>
                 <button className="icon-btn btn-sm" onClick={()=>loadOrders()} disabled={busy} title="Обновить">
@@ -858,42 +917,41 @@ function App() {
               <Search size={15} color="#94a3b8"/>
               <input aria-label="Поиск заказов" placeholder="Поиск…" value={query} onChange={e=>setQuery(e.target.value)}/>
             </div>
-            {filtered.length===0&&<p style={{color:"#94a3b8",fontSize:13,textAlign:"center",padding:"20px 0"}}>Заказов нет</p>}
+            {filtered.length===0&&<div className="ledger-empty"><h3>{query?"Ничего не найдено":"Заказов пока нет"}</h3><p>{query?"Измените запрос или проверьте вкладку закрытых заказов.":role==="partner"?"Назначенные вам заказы появятся здесь. По вопросам назначения обратитесь к администратору.":"Новые заказы появятся после заполнения клиентом заявки."}</p></div>}
             {filtered.map(o=>(
-              <button key={o.id}
-                className={`order-item ${selected?.id===o.id?"active":""} ${updatedId===o.id?"updated":""}`}
-                onClick={()=>setSelected(o)}>
-                <strong>{o.applicant?.company||o.applicant?.name||"Без названия"}</strong>
-                <small>{PROD[o.product]||o.product} · {STATUS[viewOrder(o).status]||o.status}</small>
-                <div className="badges">
+              <OrderLedgerEntry key={o.id}
+                title={o.applicant?.company||o.applicant?.name||"Без названия"}
+                product={PROD[o.product]||o.product}
+                status={o.cancelled_at?"Отменён":o.closed_at?"Закрыт":STATUS[viewOrder(o).status]||o.status}
+                active={selected?.id===o.id} updated={updatedId===o.id} onSelect={()=>setSelected(o)}>
                   {o.cancelled_at ? <span className="badge pending-el">Отменён</span> : o.closed_at&&<span className="badge approved-el">Закрыт</span>}
-                  {role==="admin"&&(proposals.some(p=>p.order_id===o.id)||eligibilityProposals.some(p=>p.order_id===o.id)||pendingReviewOrderIds.includes(o.id))&&(
+                  {role==="admin"&&(proposals.some(p=>p.order_id===o.id)||eligibilityProposals.some(p=>p.order_id===o.id)||specialistProposals.some(p=>p.order_id===o.id)||pendingReviewOrderIds.includes(o.id))&&(
                     <span className="badge doc-review">Ждёт вашего подтверждения</span>
                   )}
-                  {role==="admin" ? <span className={`badge ${o.payment_status==="paid"?"paid":"unpaid"}`}>
+                  {o.product==="itin_consult" ? <span className="badge status">Консультация{role==="admin"&&!o.partner_id&&!o.closed_at&&o.status!=="draft"?" · нужен специалист":""}</span> :
+                  role==="admin" ? <span className={`badge ${o.payment_status==="paid"?"paid":"unpaid"}`}>
                     {o.payment_status==="paid"?"Оплачено":"Ожидает оплаты"}
                   </span> : <span className={`badge ${o.in_work?"paid":"unpaid"}`}>
                     {o.in_work?"В работе":"Ожидает передачи в работу"}
                   </span>}
-                  {(o.product.includes("itin")||o.product.includes("bundle"))&&(
+                  {o.product!=="itin_consult"&&(o.product.includes("itin")||o.product.includes("bundle"))&&(
                     <span className={`badge ${o.eligibility==="approved"?"approved-el":o.eligibility==="rejected"?"pending-el":"unpaid"}`}>
                       ITIN: {o.eligibility==="approved"?"✓ Одобрен":o.eligibility==="rejected"?"✗ Отклонён":"На проверке"}
                     </span>
                   )}
-                </div>
-              </button>
+              </OrderLedgerEntry>
             ))}
           </aside>
 
-          <div className="detail">
+          <main className="detail" id="order-detail">
             {!selected?(
-              <div className="empty-state"><FileText size={42}/><h2>Выберите заказ</h2></div>
+              <div className="empty-state"><FileText size={42}/><h2>Выберите заказ</h2><p>Откройте заказ в реестре, чтобы посмотреть этапы, документы и доступные действия.</p></div>
             ):(
               <>
                 {/* Head */}
                 <div className="detail-head">
                   <div>
-                    <span className="eyebrow">ORDER / {selected.id.slice(0,8)}</span>
+                    <span className="eyebrow">Заказ {selected.id.slice(0,8)}</span>
                     <h1>{selected.applicant?.company||selected.applicant?.name||"Заказ"}</h1>
                     <p>{PROD[selected.product]||selected.product} · создан {fmt(selected.created_at)}</p>
                     {selected.partner_id&&(
@@ -903,7 +961,7 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <span className="status-pill">{STATUS[viewOrder(selected).status]||selected.status}</span>
+                  <span className="detail-reference">{PROD[selected.product]||selected.product}</span>
                 </div>
 
                 {selected.cancelled_at&&(
@@ -916,8 +974,22 @@ function App() {
                   </div>
                 ))}
 
+                {selected.product==="itin_consult" ? (
+                  <ConsultPanel order={selected} role={role as "admin"|"partner"} partners={partners}
+                    proposal={specialistProposals.find(p=>p.order_id===selected.id)||null}
+                    busy={busy} rpc={rpc} askConfirm={setConfirm}/>
+                ) : specialistHandoff ? (
+                  <div className="alert info"><CheckCircle2 size={16}/> Консультация завершена: администратор подтвердил план «{PROD[selected.product]||selected.product}». Заказ передаётся партнёру CAA/CPA, действий для специалиста нет.</div>
+                ) : (<>
+                {role==="admin"&&selectedPartnerIsSpecialist&&(
+                  <div className="alert warn"><AlertCircle size={16}/> После консультации назначен специалист. Назначьте {selected.product==="itin_return"?"партнёра CAA/CPA":"партнёра CAA или CAA/CPA"} в блоке «Назначить CAA/CPA».</div>
+                )}
                 {/* Status tracker */}
-                <StatusTracker order={viewOrder(selected)}/>
+                <ReviewState confirmed={STATUS[selected.status]||selected.status}
+                  terminal={selected.cancelled_at?"Отменён":selected.closed_at?"Закрыт":undefined}
+                  proposals={proposals.filter(p=>p.order_id===selected.id&&p.proposed_status!==(p.stream==="itin"?selected.itin_status:selected.status))
+                    .map(p=>({label:p.stream==="itin"?"ITIN":"Основной процесс",value:STATUS[p.proposed_status]||p.proposed_status}))}/>
+                <StatusTracker order={selected}/>
 
                 {/* Alerts */}
                 {role==="admin"&&selected.payment_status!=="paid"&&(
@@ -961,7 +1033,7 @@ function App() {
 
                     {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&(
                       <div className="action-section">
-                        <div className="action-label">{role==="admin"?"ОСНОВАНИЕ ITIN · РЕШЕНИЕ АДМИНИСТРАТОРА":"ОСНОВАНИЕ ITIN"}</div>
+                        <div className="action-label">{role==="admin"?"Основание ITIN: решение администратора":"Основание ITIN"}</div>
                         {eligibilityProposals.find(p=>p.order_id===selected.id)&&(()=>{
                           const proposal=eligibilityProposals.find(p=>p.order_id===selected.id)!;
                           return <div className="alert warn" style={{marginBottom:10}}>
@@ -1037,7 +1109,7 @@ function App() {
                         const noPartner = !selected.partner_id;
                         return (
                           <div className="action-section" key={stream}>
-                            <div className="action-label">{stream==="itin"?"СЛЕДУЮЩИЙ ЭТАП ITIN":"СЛЕДУЮЩИЙ ЭТАП"}</div>
+                            <div className="action-label">{stream==="itin"?"Следующий этап ITIN":"Следующий этап"}</div>
                             {role==="partner"&&(
                               <>
                                 <button className="next-step-btn" disabled={busy}
@@ -1087,7 +1159,7 @@ function App() {
                     {/* Отмена (admin) */}
                     {role==="admin"&&!selected.closed_at&&(
                       <div className="action-section">
-                        <div className="action-label">ОТМЕНА ЗАКАЗА</div>
+                        <div className="action-label">Отмена заказа</div>
                         {milestones.length>0 ? (
                           <div className="step-hint">Отмена недоступна: документы уже поданы ({milestones.map(m=>m.milestone==="state_filed"?"в штат":"в IRS").join(", ")}).</div>
                         ) : (
@@ -1107,14 +1179,21 @@ function App() {
                       </div>
                     )}
 
+                    {role==="admin"&&<AdminFinance>
                     {/* Возврат (admin) */}
                     {role==="admin"&&selected.payment_status==="paid"&&(
                       <div className="action-section">
-                        <div className="action-label" id="refund-entry">ВОЗВРАТ СРЕДСТВ</div>
+                        <PaymentLines lines={paymentLines} state={selected.product.endsWith("_de")?"DE":selected.product.endsWith("_wy")?"WY":null}/>
+                        <div className="action-label" id="refund-entry">Возврат средств</div>
+                        {selected.amount_cents!=null&&(()=>{ const r=refunds.reduce((a,x)=>a+x.amount_cents,0);
+                          return <div className="step-hint" style={{marginBottom:8}}>Оплачено {usd(selected.amount_cents)}, уже возвращено {usd(r)}, доступно {usd(Math.max(0,selected.amount_cents-r))}</div>; })()}
                         <div style={{display:"flex",gap:8}}>
                           <input className="partner-select" aria-label="Сумма возврата в долларах" style={{flex:1}} type="number" min={1} step="0.01" placeholder="Сумма, $" value={refundAmount} onChange={e=>setRefundAmount(e.target.value)}/>
                           <select className="partner-select" aria-label="Часть заказа для возврата" style={{flex:1}} value={refundScope} onChange={e=>setRefundScope(e.target.value)}>
-                            <option value="order">Весь заказ</option><option value="llc">LLC</option><option value="itin">ITIN</option><option value="other">Другое</option>
+                            <option value="order">Весь заказ</option>
+                            {(selected.product.startsWith("llc")||selected.product.startsWith("bundle"))&&<option value="llc">LLC</option>}
+                            {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&<option value="itin">ITIN</option>}
+                            <option value="other">Другое</option>
                           </select>
                         </div>
                         <textarea className="note-area" aria-label="Причина и расчёт возврата" placeholder="Причина и расчёт возврата *" value={refundReason} onChange={e=>setRefundReason(e.target.value)}/>
@@ -1138,7 +1217,7 @@ function App() {
                     {/* Срок пакета (admin) */}
                     {role==="admin"&&!selected.product.startsWith("itin")&&(
                       <div className="action-section">
-                        <div className="action-label">СРОК ОБСЛУЖИВАНИЯ</div>
+                        <div className="action-label">Срок обслуживания</div>
                         <select className="partner-select" value={selected.service_years||1} disabled={busy}
                           onChange={e=>rpc("set_service_years",{p_order:selected.id,p_years:Number(e.target.value)},"Срок пакета обновлён")}>
                           {[1,2,3,4,5].map(y=><option key={y} value={y}>{y} {y===1?"год":y<5?"года":"лет"}</option>)}
@@ -1149,18 +1228,34 @@ function App() {
                     {/* Оплата */}
                     {role==="admin"&&selected.payment_status!=="paid"&&(
                       <div className="action-section">
-                        <div className="action-label">ОПЛАТА</div>
+                        <div className="action-label">Оплата</div>
                         {(()=>{ const gated=selected.product.startsWith("itin")&&selected.eligibility!=="approved";
                           return gated ? <div className="step-hint" style={{marginBottom:8}}>Оплату можно отметить только после одобрения основания ITIN. Сейчас: {selected.eligibility==="rejected"?"отклонено":"на проверке"}.</div> : null; })()}
+                        {due&&(
+                          <>
+                            <div className="step-hint" style={{marginBottom:8}}>
+                              К получению: <b>{usd(due.total_cents)}</b> ({dueBreakdown(due)})
+                            </div>
+                            <label style={{display:"block",marginBottom:8}}>
+                              <span className="step-hint">Получено, $</span>
+                              <input className="partner-select" type="number" min={0} step="0.01" aria-label="Получено, $"
+                                value={paidInput} onChange={e=>setPaidInput(e.target.value)}/>
+                            </label>
+                          </>
+                        )}
                         <button className="btn btn-primary btn-full"
-                          disabled={busy||(selected.product.startsWith("itin")&&selected.eligibility!=="approved")}
+                          disabled={busy||(selected.product.startsWith("itin")&&selected.eligibility!=="approved")||(!!due&&!(Number(paidInput)>0))}
                           onClick={()=>{
                             const note=prompt("Комментарий к оплате (необязательно)")||"";
+                            const cents = due ? Math.round(Number(paidInput)*100) : null;
                             setConfirm({
-                              title:"Отметить оплату вручную?",
+                              title: cents!==null ? `Отметить оплату ${usd(cents)}?` : "Отметить оплату вручную?",
                               body:"Убедитесь, что перевод получен. Это действие нельзя отменить.",
                               confirmLabel:"Отметить оплату",
-                              onConfirm:()=>rpc("mark_order_paid_manually",{p_order:selected.id,p_note:note},"Оплата отмечена")
+                              // С миграцией 020 — всегда форма с суммой; без неё (старая база) — прежний вызов.
+                              onConfirm:()=>rpc("mark_order_paid_manually",
+                                cents!==null ? {p_order:selected.id,p_note:note,p_amount_cents:cents} : {p_order:selected.id,p_note:note},
+                                "Оплата отмечена")
                             });
                           }}>
                           <CheckCircle2 size={15}/> Отметить оплату
@@ -1176,14 +1271,16 @@ function App() {
                       </div>
                     )}
 
+                    </AdminFinance>}
+
                     {/* Назначение партнёра (admin) */}
                     {role==="admin"&&(
                       <div className="action-section">
-                        <div className="action-label">НАЗНАЧИТЬ CAA/CPA</div>
+                        <div className="action-label">Назначить CAA/CPA</div>
                         <select className="partner-select" value={selectedPartner}
                           onChange={e=>setSelectedPartner(e.target.value)}>
                           <option value="">— выберите специалиста —</option>
-                          {partners.filter(p=>selected.product==="itin_return"?p.qualification==="CAA/CPA":selected.product==="itin_standard"||selected.product.startsWith("bundle")?p.qualification==="CAA"||p.qualification==="CAA/CPA":true).map(p=>(
+                          {partners.filter(p=>p.qualification!=="SPECIALIST").filter(p=>selected.product==="itin_return"?p.qualification==="CAA/CPA":selected.product==="itin_standard"||selected.product.startsWith("bundle")?p.qualification==="CAA"||p.qualification==="CAA/CPA":true).map(p=>(
                             <option key={p.id} value={p.id}>{p.display_name} · {p.qualification}</option>
                           ))}
                         </select>
@@ -1231,12 +1328,12 @@ function App() {
                       </button>
                     )}
                     <div className="action-section" style={{marginTop:14}}>
-                      <div className="action-label">ФИНАЛЬНЫЕ ДОКУМЕНТЫ ITIN</div>
+                      <div className="action-label">Финальные документы ITIN</div>
                       <div className="step-hint">{itinRecord?"✓":"○"} Номер ITIN внесён</div>
                       <div className="step-hint">{partnerDocs.some(d=>d.doc_type==="itin_letter"&&(role==="admin"?d.visibility==="published":d.visibility!=="partner_only"))?"✓":"○"} Письмо IRS (CP565) {role==="admin"?"передано клиенту":"отправлено"}</div>
                     </div>
                     {irsEvents.length>0&&<div style={{marginTop:12}}>
-                      <div className="action-label">ИСТОРИЯ IRS · ПОПЫТКА {selected.itin_attempt||1}</div>
+                      <div className="action-label">История IRS, попытка {selected.itin_attempt||1}</div>
                       {irsEvents.map(event=><div className="history-row" key={event.id}>
                         <span>{event.kind==="request"?"Запрос IRS":"Отказ IRS"} · {event.note} · попытка {event.attempt}</span>
                         <time>{fmt(event.created_at)}</time>
@@ -1464,7 +1561,7 @@ function App() {
 
                   {role==="partner"&&(
                     <>
-                      <div className="section-title" style={{marginTop:16}}>ЗАГРУЗИТЬ ДОКУМЕНТ</div>
+                      <div className="section-title" style={{marginTop:16}}>Загрузить документ</div>
                       <select className="partner-select" value={docType} onChange={e=>setDocType(e.target.value)} style={{marginBottom:8}}>
                         {Object.entries(DOC_TYPES).map(([v,l])=><option key={v} value={v}>{l}</option>)}
                       </select>
@@ -1481,6 +1578,8 @@ function App() {
                   )}
                 </div>
 
+                </>)}
+
                 {/* Audit (admin) */}
                 {role==="admin"&&(
                   <div className="card" style={{marginBottom:18}}>
@@ -1488,7 +1587,8 @@ function App() {
                     {audit.length===0&&<p style={{color:"#94a3b8",fontSize:13}}>Записей нет</p>}
                     {audit.map(a=>{
                       const nv=(a.new_value||{}) as Record<string,unknown>; const ov=(a.old_value||{}) as Record<string,unknown>;
-                      const what = a.entity==="orders" ? (nv.status!==ov.status?`статус: ${STATUS[String(ov.status)]||ov.status||"—"} → ${STATUS[String(nv.status)]||nv.status}`
+                      const what = a.entity==="orders" ? (nv.product!==ov.product&&ov.product?`продукт: ${PROD[String(ov.product)]||ov.product} → ${PROD[String(nv.product)]||nv.product}`
+                          : nv.status!==ov.status?`статус: ${STATUS[String(ov.status)]||ov.status||"—"} → ${STATUS[String(nv.status)]||nv.status}`
                           : nv.partner_id!==ov.partner_id?"смена партнёра" : nv.payment_status!==ov.payment_status?`оплата: ${nv.payment_status}`
                           : nv.cancelled_at&&!ov.cancelled_at?"отмена" : nv.eligibility!==ov.eligibility?`ITIN: ${nv.eligibility}` : nv.closed_at&&!ov.closed_at?"закрытие":"изменение заказа")
                         : a.entity==="status_proposals" ? (a.action==="delete"?"прогресс партнёра сброшен/подтверждён":`партнёр: ${STATUS[String(nv.proposed_status)]||nv.proposed_status}`)
@@ -1496,7 +1596,8 @@ function App() {
                         : a.entity==="documents" ? (nv.superseded_at&&!ov.superseded_at?"документ клиента заменён":`документ клиента: ${nv.review_status}`)
                         : a.entity==="companies" ? (nv.approved&&!ov.approved?"данные компании одобрены":"данные компании")
                         : a.entity==="order_refunds" ? `возврат $${(Number(nv.amount_cents)/100).toFixed(2)}`
-                        : a.entity==="order_milestones" ? "факт подачи" : `${a.entity}: ${a.action}`;
+                        : a.entity==="order_milestones" ? "факт подачи"
+                        : a.entity==="specialist_proposals" ? (a.action==="delete"?"предложение специалиста обработано":`специалист предлагает: ${nv.decision==="approve"?`одобрить → ${PROD[String(nv.recommended_product)]||nv.recommended_product}`:"отказать"}`) : `${a.entity}: ${a.action}`;
                       return (
                         <div className="history-row" key={a.id}>
                           <span>{what}{a.reason?` · «${a.reason}»`:""} <span style={{color:"#94a3b8"}}>· {a.actor_role||"система"}</span></span>
@@ -1524,7 +1625,7 @@ function App() {
                 </div>
               </>
             )}
-          </div>
+          </main>
         </div>
       )}
     </div>
