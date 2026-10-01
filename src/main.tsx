@@ -779,11 +779,6 @@ function App() {
   if (app?.status==="rejected") return <PendingScreen app={app}/>;
 
   const pendingApps = applications.filter(a=>a.status==="pending");
-  // После одобрения консультации заказ становится обычным ITIN, но специалист остаётся назначен,
-  // пока админ не передаст его CAA/CPA. Специалисту в это время действия ITIN не показываем.
-  const selectedPartnerIsSpecialist = !!selected && partners.find(p=>p.id===selected.partner_id)?.qualification==="SPECIALIST";
-  const specialistHandoff = role==="partner" && !!selected && selected.product!=="itin_consult" && selectedPartnerIsSpecialist
-    && partners.find(p=>p.id===selected.partner_id)?.profile_id===user.id;
 
   return (
     <div className="shell">
@@ -983,12 +978,7 @@ function App() {
                   <ConsultPanel order={selected} role={role as "admin"|"partner"} partners={partners}
                     proposal={specialistProposals.find(p=>p.order_id===selected.id)||null}
                     busy={busy} rpc={rpc} askConfirm={setConfirm}/>
-                ) : specialistHandoff ? (
-                  <div className="alert info"><CheckCircle2 size={16}/>{t(" Консультация завершена: администратор подтвердил план «")}{PROD[selected.product]||selected.product}{t("». Заказ передаётся партнёру CAA/CPA, действий для специалиста нет.")}</div>
                 ) : (<>
-                {role==="admin"&&selectedPartnerIsSpecialist&&(
-                  <div className="alert warn"><AlertCircle size={16}/>{t(" После консультации назначен специалист. Назначьте ")}{selected.product==="itin_return"?t("партнёра CAA/CPA"):t("партнёра CAA или CAA/CPA")}{t(" в блоке «Назначить CAA/CPA».")}</div>
-                )}
                 {/* Status tracker */}
                 <ReviewState confirmed={STATUS[selected.status]||selected.status}
                   terminal={selected.cancelled_at?t("Отменён"):selected.closed_at?t("Закрыт"):undefined}

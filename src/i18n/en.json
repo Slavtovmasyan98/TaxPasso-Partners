@@ -64,7 +64,6 @@
   "Решение администратора": "Administrator's decision",
   "Подтвердить можно после предложения специалиста. Отклонить можно в любой момент.": "You can confirm after the specialist's proposal. You can reject at any time.",
   "Подтвердить план специалиста?": "Confirm the specialist's plan?",
-  "Заказ станет «{0}», этап «Документы». После решения клиенту откроется оплата. Затем назначьте {1}.": "The order becomes “{0}”, stage “Documents”. After the decision, payment opens for the client. Then assign {1}.",
   "партнёра CAA/CPA": "a CAA/CPA partner",
   "партнёра CAA или CAA/CPA": "a CAA or CAA/CPA partner",
   "Подтвердить и открыть оплату": "Confirm and open payment",
@@ -324,10 +323,6 @@
   "W-7 отправлена в IRS": "W-7 sent to the IRS",
   "партнёр": "partner",
   ". Повторно не подавать.": ". Do not file again.",
-  " Консультация завершена: администратор подтвердил план «": " Consultation finished: the administrator confirmed the plan “",
-  "». Заказ передаётся партнёру CAA/CPA, действий для специалиста нет.": "”. The order goes to a CAA/CPA partner; no actions for the specialist.",
-  " После консультации назначен специалист. Назначьте ": " A specialist is assigned after the consultation. Assign ",
-  " в блоке «Назначить CAA/CPA».": " in the “Assign CAA/CPA” block.",
   "Основной процесс": "Main process",
   "Заказ не оплачен. Отметьте оплату вручную после получения перевода.": "Order not paid. Mark the payment manually once the transfer is received.",
   "Ожидается оплата от клиента.": "Awaiting payment from the client.",
@@ -534,5 +529,6 @@
   "система": "system",
   "История": "History",
   "История пуста": "No history yet",
-  "Этот email уже зарегистрирован, письмо не отправляется. Войдите с этим email и паролем: после входа откроется заявка партнёра.": "This email is already registered, so no email is sent. Sign in with this email and password: the partner application opens after you sign in."
+  "Этот email уже зарегистрирован, письмо не отправляется. Войдите с этим email и паролем: после входа откроется заявка партнёра.": "This email is already registered, so no email is sent. Sign in with this email and password: the partner application opens after you sign in.",
+  "Заказ станет «{0}», этап «Документы». После решения клиенту откроется оплата, а специалист будет снят с заказа. Затем назначьте {1}.": "The order becomes “{0}”, stage “Documents”. After the decision, payment opens for the client and the specialist is removed from the order. Then assign {1}."
 }

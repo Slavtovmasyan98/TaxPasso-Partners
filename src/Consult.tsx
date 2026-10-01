@@ -250,7 +250,7 @@ export function ConsultPanel({
                 <button className="btn btn-success btn-sm" disabled={busy} style={{ marginBottom: 10 }}
                   onClick={() => askConfirm(proposal.decision === "approve" ? {
                     title: t("Подтвердить план специалиста?"),
-                    body: t("Заказ станет «{0}», этап «Документы». После решения клиенту откроется оплата. Затем назначьте {1}.", { 0: CONSULT_PRODUCTS[proposal.recommended_product || ""] || proposal.recommended_product, 1: proposal.recommended_product === "itin_return" ? t("партнёра CAA/CPA") : t("партнёра CAA или CAA/CPA") }),
+                    body: t("Заказ станет «{0}», этап «Документы». После решения клиенту откроется оплата, а специалист будет снят с заказа. Затем назначьте {1}.", { 0: CONSULT_PRODUCTS[proposal.recommended_product || ""] || proposal.recommended_product, 1: proposal.recommended_product === "itin_return" ? t("партнёра CAA/CPA") : t("партнёра CAA или CAA/CPA") }),
                     confirmLabel: t("Подтвердить и открыть оплату"),
                     onConfirm: () => rpc("confirm_specialist_plan", { p_order: order.id, p_op: op("confirm") }, t("План подтверждён: клиент видит продукт и оплату")),
                   } : {
