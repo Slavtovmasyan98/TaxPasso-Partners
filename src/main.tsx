@@ -254,7 +254,14 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
           },
         },
       });
-      if (error) setMsg(error.message);
+      // Email уже зарегистрирован (например, как клиент сайта): Supabase письмо не отправляет и, если включено
+      // подтверждение email, отвечает «успехом» с пустым identities; без подтверждения — ошибкой. Предлагаем войти.
+      const exists = error ? /already registered|already exists/i.test(error.message) : !!data.user && data.user.identities?.length === 0;
+      if (exists) {
+        setTab("sign_in");
+        setMsg(t("Этот email уже зарегистрирован, письмо не отправляется. Войдите с этим email и паролем: после входа откроется заявка партнёра."));
+      }
+      else if (error) setMsg(error.message);
       else if (data.session && data.user) onAuth(data.user);
       else {
         setOk(true);

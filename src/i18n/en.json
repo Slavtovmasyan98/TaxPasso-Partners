@@ -533,5 +533,6 @@
   "отказать": "reject",
   "система": "system",
   "История": "History",
-  "История пуста": "No history yet"
+  "История пуста": "No history yet",
+  "Этот email уже зарегистрирован, письмо не отправляется. Войдите с этим email и паролем: после входа откроется заявка партнёра.": "This email is already registered, so no email is sent. Sign in with this email and password: the partner application opens after you sign in."
 }
