@@ -200,3 +200,7 @@ dl div{grid-template-columns:minmax(80px,.7fr) minmax(0,1.3fr)}dt{color:var(--mu
 @media(max-width:1100px){.workspace{grid-template-columns:280px minmax(0,1fr)}.detail{padding:24px}.grid-2{grid-template-columns:1fr}.review-confirmed,.review-proposed{padding:18px}}
 @media(max-width:860px){.workspace{display:block}aside{max-height:360px;border-bottom:1px solid var(--line)}.detail{padding:24px 16px}.review-state{grid-template-columns:1fr}.review-proposed,.review-proposed.has-proposal{border-left:0;border-top:1px dashed var(--line)}.tracker-steps{grid-auto-flow:row;grid-template-columns:1fr;gap:12px}.tracker-step{display:grid;grid-template-columns:32px 1fr;gap:12px;align-items:center}.tracker-step:not(:last-child)::after{top:32px;left:15px;width:2px;height:12px}.tracker-label{text-align:left;max-width:none;margin:0}.detail-reference{display:none}.card{padding:20px}.detail h1{font-size:24px}.toast-wrap{left:12px;right:12px}.toast{min-width:0;max-width:100%}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+.lang-switch{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--paper)}
+.lang-switch button{border:0;background:transparent;padding:4px 9px;min-width:34px;min-height:28px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer}
+.lang-switch button.active{background:var(--action);color:#fff}
+.login-card,.pending-card{position:relative}.lang-switch.corner{position:absolute;top:14px;right:14px}
