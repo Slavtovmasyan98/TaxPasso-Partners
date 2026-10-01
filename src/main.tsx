@@ -7,8 +7,10 @@ import {
   Upload, Users, XCircle, ClipboardList, UserCheck, X,
 } from "lucide-react";
 import "./styles.css";
+import { t, tr, locale, useLang, LangSwitch } from "./i18n";
 import { OrderLedgerEntry, ReviewState, AdminFinance } from "./components/OrderPresentation";
 import { ConsultPanel, CONSULT_ERRORS, type SpecialistProposal } from "./Consult";
+import { ItinW7, type ItinApplication } from "./ItinW7";
 import { ProductPrices, RenewalPrices, PaymentLines, dueBreakdown, moneyErrorMessage, usd, type PaymentDue, type ProductPrice, type RenewalPrice, type PaymentLine } from "./Money";
 
 const sb = createClient(
@@ -63,27 +65,27 @@ type Confirm = { title: string; body: string; confirmLabel: string; danger?: boo
 const LLC_CHAIN = ["application","review","filed_state","registered","ein_requested","ein_received"];
 const ITIN_CHAIN = ["documents","caa_interview","sent_irs","itin_received"];
 const ITIN_RETURN_CHAIN = ["documents","return_prep","client_signed","caa_interview","sent_irs","itin_received"];
-const STATUS: Record<string,string> = {
+const STATUS: Record<string,string> = tr({
   draft:"Черновик", application:"Анкета", review:"Проверка",
   filed_state:"Подано в штат", registered:"Компания зарегистрирована",
   ein_requested:"EIN запрошен", ein_received:"EIN получен",
   documents:"Документы", return_prep:"Подготовка декларации", client_signed:"Декларация подписана клиентом",
   caa_interview:"Интервью CAA", sent_irs:"Отправлено в IRS", itin_received:"ITIN получен",
   consult_interview:"Консультация специалиста",
-};
-const PROD: Record<string,string> = {
+});
+const PROD: Record<string,string> = tr({
   llc_wy:"LLC Wyoming", llc_de:"LLC Delaware",
   itin_standard:"ITIN Standard", itin_return:"ITIN + 1040-NR",
   bundle_wy:"LLC Wyoming + ITIN", bundle_de:"LLC Delaware + ITIN",
   itin_consult:"Консультация ITIN",
-};
-const DOC_TYPES: Record<string,string> = {
+});
+const DOC_TYPES: Record<string,string> = tr({
   articles:"Articles of Organization", ein_letter:"Письмо EIN (IRS)",
   operating_agreement:"Operating Agreement", w7:"Форма W-7", coa:"Certificate of Accuracy (COA)",
   tax_return:"Налоговая декларация", itin_letter:"Письмо IRS с ITIN (CP565)",
   other:"Другой документ",
-};
-const STEP_HINTS: Record<string,string> = {
+});
+const STEP_HINTS: Record<string,string> = tr({
   review:"Проверить анкету клиента и загруженные документы",
   filed_state:"Подать документы в штат (WY/DE)",
   registered:"Компания зарегистрирована в штате",
@@ -94,10 +96,10 @@ const STEP_HINTS: Record<string,string> = {
   caa_interview:"Провести видеоинтервью с клиентом",
   sent_irs:"Отправить W-7 в IRS",
   itin_received:"ITIN получен, сообщить клиенту",
-};
+});
 
 function fmt(d: string) {
-  return new Date(d).toLocaleString("ru-RU",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"});
+  return new Date(d).toLocaleString(locale(),{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"});
 }
 function fmtBytes(n: number) {
   return n<1024?n+" B":n<1048576?(n/1024).toFixed(0)+" KB":(n/1048576).toFixed(1)+" MB";
@@ -161,7 +163,7 @@ function ConfirmDialog({ c, onCancel }: { c: Confirm; onCancel: () => void }) {
         <h2 id={titleId}>{c.title}</h2>
         <p>{c.body}</p>
         <div className="dialog-actions">
-          <button className="btn btn-outline" onClick={onCancel}>Отмена</button>
+          <button className="btn btn-outline" onClick={onCancel}>{t("Отмена")}</button>
           <button className={`btn ${c.danger?"btn-danger":"btn-primary"}`} onClick={() => { c.onConfirm(); onCancel(); }}>
             {c.confirmLabel}
           </button>
@@ -199,7 +201,7 @@ function StatusTracker({ order }: { order: Order }) {
       {/* ITIN bundle */}
       {order.itin_status && (
         <div style={{marginTop:12}}>
-          <div className="action-label">Процесс ITIN</div>
+          <div className="action-label">{t("Процесс ITIN")}</div>
           <div className="tracker-steps">
             {ITIN_CHAIN.map((s, i) => {
               const cur = ITIN_CHAIN.indexOf(order.itin_status!);
@@ -253,11 +255,18 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
           },
         },
       });
-      if (error) setMsg(error.message);
+      // Email уже зарегистрирован (например, как клиент сайта): Supabase письмо не отправляет и, если включено
+      // подтверждение email, отвечает «успехом» с пустым identities; без подтверждения — ошибкой. Предлагаем войти.
+      const exists = error ? /already registered|already exists/i.test(error.message) : !!data.user && data.user.identities?.length === 0;
+      if (exists) {
+        setTab("sign_in");
+        setMsg(t("Этот email уже зарегистрирован, письмо не отправляется. Войдите с этим email и паролем: после входа откроется заявка партнёра."));
+      }
+      else if (error) setMsg(error.message);
       else if (data.session && data.user) onAuth(data.user);
       else {
         setOk(true);
-        setMsg("Проверьте email и подтвердите регистрацию. После первого входа заявка уйдёт администратору.");
+        setMsg(t("Проверьте email и подтвердите регистрацию. После первого входа заявка уйдёт администратору."));
       }
     }
     setBusy(false);
@@ -265,26 +274,27 @@ function LoginScreen({ onAuth }: { onAuth: (u: User) => void }) {
   return (
     <div className="full-page">
       <div className="login-card">
+        <LangSwitch className="corner"/>
         <ShieldCheck size={36} color="#4762c9"/>
         <h1>Taxpasso Partners</h1>
-        <p>Кабинет для CAA/CPA, специалистов и администратора</p>
+        <p>{t("Кабинет для CAA/CPA, специалистов и администратора")}</p>
         <div className="login-tabs">
-          <button className={tab==="sign_in"?"active":""} onClick={()=>{setTab("sign_in");setMsg("");}}>Войти</button>
-          <button className={tab==="sign_up"?"active":""} onClick={()=>{setTab("sign_up");setMsg("");}}>Регистрация</button>
+          <button className={tab==="sign_in"?"active":""} onClick={()=>{setTab("sign_in");setMsg("");}}>{t("Войти")}</button>
+          <button className={tab==="sign_up"?"active":""} onClick={()=>{setTab("sign_up");setMsg("");}}>{t("Регистрация")}</button>
         </div>
         {tab==="sign_up" && <>
-          <input aria-label="ФИО" placeholder="ФИО *" value={name} onChange={e=>setName(e.target.value)}/>
-          <select className="partner-select" aria-label="Квалификация" value={qual} onChange={e=>setQual(e.target.value)} style={{marginBottom:10}}>
-            <option>CAA</option><option>CPA</option><option>CAA/CPA</option><option value="SPECIALIST">Специалист (консультации ITIN)</option>
+          <input aria-label={t("ФИО")} placeholder={t("ФИО *")} value={name} onChange={e=>setName(e.target.value)}/>
+          <select className="partner-select" aria-label={t("Квалификация")} value={qual} onChange={e=>setQual(e.target.value)} style={{marginBottom:10}}>
+            <option>CAA</option><option>CPA</option><option>CAA/CPA</option><option value="SPECIALIST">{t("Специалист (консультации ITIN)")}</option>
           </select>
-          <textarea className="note-area" aria-label="Коротко о себе" placeholder="Коротко о себе (необязательно)" value={bio} onChange={e=>setBio(e.target.value)} style={{marginBottom:10}}/>
+          <textarea className="note-area" aria-label={t("Коротко о себе")} placeholder={t("Коротко о себе (необязательно)")} value={bio} onChange={e=>setBio(e.target.value)} style={{marginBottom:10}}/>
         </>}
         <input aria-label="Email" type="email" placeholder="Email *" value={email} onChange={e=>setEmail(e.target.value)}/>
-        <input aria-label="Пароль" type="password" placeholder="Пароль (мин. 8 символов) *" value={password} onChange={e=>setPassword(e.target.value)}/>
+        <input aria-label={t("Пароль")} type="password" placeholder={t("Пароль (мин. 8 символов) *")} value={password} onChange={e=>setPassword(e.target.value)}/>
         <button className="btn btn-primary btn-full" style={{marginTop:4}}
           disabled={busy||!email||password.length<8||(tab==="sign_up"&&!name.trim())}
           onClick={submit}>
-          {busy?"Подождите…":tab==="sign_in"?"Войти":"Подать заявку"}
+          {busy?t("Подождите…"):tab==="sign_in"?t("Войти"):t("Подать заявку")}
         </button>
         {msg && <p className={ok?"success-msg":"error-msg"}>{msg}</p>}
       </div>
@@ -300,23 +310,24 @@ function MfaChallenge({ onDone }: { onDone: () => void }) {
     setBusy(true); setErr("");
     const { data: f } = await sb.auth.mfa.listFactors();
     const factor = f?.totp?.[0];
-    if (!factor) { setErr("Аутентификатор не найден"); setBusy(false); return; }
+    if (!factor) { setErr(t("Аутентификатор не найден")); setBusy(false); return; }
     const { error } = await sb.auth.mfa.challengeAndVerify({ factorId: factor.id, code: code.trim() });
-    if (error) setErr("Неверный код. Проверьте время на телефоне и попробуйте снова.");
+    if (error) setErr(t("Неверный код. Проверьте время на телефоне и попробуйте снова."));
     else onDone();
     setBusy(false);
   }
   return (
     <div className="full-page">
       <div className="login-card">
+        <LangSwitch className="corner"/>
         <ShieldCheck size={36} color="#4762c9"/>
-        <h1>Код подтверждения</h1>
-        <p>Введите 6 цифр из приложения-аутентификатора</p>
+        <h1>{t("Код подтверждения")}</h1>
+        <p>{t("Введите 6 цифр из приложения-аутентификатора")}</p>
         <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="123456"
           value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,""))}/>
-        <button className="btn btn-primary btn-full" disabled={busy||code.length!==6} onClick={verify}>Подтвердить</button>
+        <button className="btn btn-primary btn-full" disabled={busy||code.length!==6} onClick={verify}>{t("Подтвердить")}</button>
         {err&&<p className="error-msg">{err}</p>}
-        <button className="btn btn-outline btn-full" style={{marginTop:10}} onClick={()=>sb.auth.signOut()}><LogOut size={16}/> Выйти</button>
+        <button className="btn btn-outline btn-full" style={{marginTop:10}} onClick={()=>sb.auth.signOut()}><LogOut size={16}/>{t(" Выйти")}</button>
       </div>
     </div>
   );
@@ -338,13 +349,13 @@ function MfaSetup({ onClose }: { onClose: () => void }) {
     if ((data?.totp||[]).length>0) { setState("enabled"); return; }
     for (const f of (data?.all||[])) if (f.status==="unverified") await sb.auth.mfa.unenroll({ factorId: f.id });
     const { data: en, error } = await sb.auth.mfa.enroll({ factorType: "totp", friendlyName: `Taxpasso ${Date.now()}` });
-    if (error||!en) { setMsg(error?.message||"Не удалось начать подключение"); setState("enroll"); return; }
+    if (error||!en) { setMsg(error?.message||t("Не удалось начать подключение")); setState("enroll"); return; }
     setFactorId(en.id); setQr(en.totp.qr_code); setSecret(en.totp.secret); setState("enroll");
   })(); }, []);
   async function verify() {
     setBusy(true); setMsg("");
     const { error } = await sb.auth.mfa.challengeAndVerify({ factorId, code: code.trim() });
-    if (error) setMsg("Неверный код. Попробуйте ещё раз."); else setState("enabled");
+    if (error) setMsg(t("Неверный код. Попробуйте ещё раз.")); else setState("enabled");
     setBusy(false);
   }
   return (
@@ -356,24 +367,24 @@ function MfaSetup({ onClose }: { onClose: () => void }) {
           if(e.shiftKey&&document.activeElement===controls[0]){e.preventDefault();controls[controls.length-1].focus();}
           else if(!e.shiftKey&&document.activeElement===controls[controls.length-1]){e.preventDefault();controls[0].focus();}
         }}} onClick={e=>e.stopPropagation()}>
-        <h2 id={titleId}>Двухфакторная защита</h2>
-        {state==="loading"&&<p>Загрузка…</p>}
-        {state==="enabled"&&<p>✓ Подключена. При входе потребуется код из приложения-аутентификатора.</p>}
+        <h2 id={titleId}>{t("Двухфакторная защита")}</h2>
+        {state==="loading"&&<p>{t("Загрузка…")}</p>}
+        {state==="enabled"&&<p>{t("✓ Подключена. При входе потребуется код из приложения-аутентификатора.")}</p>}
         {state==="enroll"&&(
           <>
-            <p>1. Откройте Google Authenticator, 1Password или другое приложение-аутентификатор и отсканируйте QR-код.</p>
-            {qr&&<img src={qr} alt="QR-код для аутентификатора" style={{width:180,height:180,display:"block",margin:"8px auto"}}/>}
-            {secret&&<p style={{fontSize:12,wordBreak:"break-all"}}>Или введите ключ вручную: <code>{secret}</code></p>}
-            <p>2. Введите 6 цифр из приложения:</p>
-            <input className="partner-select" aria-label="Шестизначный код из приложения-аутентификатора" inputMode="numeric" maxLength={6} placeholder="123456"
+            <p>{t("1. Откройте Google Authenticator, 1Password или другое приложение-аутентификатор и отсканируйте QR-код.")}</p>
+            {qr&&<img src={qr} alt={t("QR-код для аутентификатора")} style={{width:180,height:180,display:"block",margin:"8px auto"}}/>}
+            {secret&&<p style={{fontSize:12,wordBreak:"break-all"}}>{t("Или введите ключ вручную: ")}<code>{secret}</code></p>}
+            <p>{t("2. Введите 6 цифр из приложения:")}</p>
+            <input className="partner-select" aria-label={t("Шестизначный код из приложения-аутентификатора")} inputMode="numeric" maxLength={6} placeholder="123456"
               value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,""))}/>
             <div className="dialog-actions" style={{marginTop:12}}>
-              <button className="btn btn-primary" disabled={busy||code.length!==6||!factorId} onClick={verify}>Подключить</button>
+              <button className="btn btn-primary" disabled={busy||code.length!==6||!factorId} onClick={verify}>{t("Подключить")}</button>
             </div>
           </>
         )}
         {msg&&<p className="error-msg">{msg}</p>}
-        <div className="dialog-actions" style={{marginTop:12}}><button className="btn btn-outline" onClick={onClose}>Закрыть</button></div>
+        <div className="dialog-actions" style={{marginTop:12}}><button className="btn btn-outline" onClick={onClose}>{t("Закрыть")}</button></div>
       </div>
     </div>
   );
@@ -395,13 +406,13 @@ function ApplyForm({ userId, onDone }: { userId: string; onDone: () => void }) {
   }
   return (
     <div style={{ textAlign: "left", marginTop: 20 }}>
-      <input className="partner-select" placeholder="ФИО *" value={name} onChange={e=>setName(e.target.value)} style={{ marginBottom: 10 }}/>
+      <input className="partner-select" placeholder={t("ФИО *")} value={name} onChange={e=>setName(e.target.value)} style={{ marginBottom: 10 }}/>
       <select className="partner-select" value={qual} onChange={e=>setQual(e.target.value)} style={{ marginBottom: 10 }}>
-        <option>CAA</option><option>CPA</option><option>CAA/CPA</option><option value="SPECIALIST">Специалист (консультации ITIN)</option>
+        <option>CAA</option><option>CPA</option><option>CAA/CPA</option><option value="SPECIALIST">{t("Специалист (консультации ITIN)")}</option>
       </select>
-      <textarea className="note-area" placeholder="Коротко о себе (необязательно)" value={bio} onChange={e=>setBio(e.target.value)}/>
+      <textarea className="note-area" placeholder={t("Коротко о себе (необязательно)")} value={bio} onChange={e=>setBio(e.target.value)}/>
       <button className="btn btn-primary btn-full" style={{ marginTop: 10 }} disabled={busy || name.trim().length < 2} onClick={send}>
-        {busy ? "Отправка…" : "Отправить заявку"}
+        {busy ? t("Отправка…") : t("Отправить заявку")}
       </button>
       {err && <p className="error-msg">{err}</p>}
     </div>
@@ -413,13 +424,13 @@ function PendingScreen({ app, userId, onApplied }: { app: PartnerApp|null; userI
     return (
       <div className="full-page">
         <div className="pending-card">
+          <LangSwitch className="corner"/>
           <ShieldCheck size={40} color="#4762c9"/>
-          <h1>Заявка партнёра</h1>
-          <p>Расскажите о себе, и администратор рассмотрит заявку.</p>
+          <h1>{t("Заявка партнёра")}</h1>
+          <p>{t("Расскажите о себе, и администратор рассмотрит заявку.")}</p>
           <ApplyForm userId={userId} onDone={onApplied}/>
           <button className="btn btn-outline" style={{ marginTop: 16 }} onClick={()=>sb.auth.signOut()}>
-            <LogOut size={16}/> Выйти
-          </button>
+            <LogOut size={16}/>{t(" Выйти")}</button>
         </div>
       </div>
     );
@@ -427,20 +438,19 @@ function PendingScreen({ app, userId, onApplied }: { app: PartnerApp|null; userI
   return (
     <div className="full-page">
       <div className="pending-card">
+        <LangSwitch className="corner"/>
         <Clock size={40} color="#92400e"/>
-        <h1>Заявка на проверке</h1>
+        <h1>{t("Заявка на проверке")}</h1>
         {app ? (
-          <p>Ваша заявка ({app.qualification}) подана {fmt(app.created_at)}.<br/>
-          Администратор рассмотрит её в ближайшее время.</p>
-        ) : <p>Обратитесь к администратору для получения доступа.</p>}
+          <p>{t("Ваша заявка (")}{app.qualification}{t(") подана ")}{fmt(app.created_at)}.<br/>{t("Администратор рассмотрит её в ближайшее время.")}</p>
+        ) : <p>{t("Обратитесь к администратору для получения доступа.")}</p>}
         {app?.status==="rejected" && (
           <div className="alert danger" style={{marginTop:20,textAlign:"left"}}>
-            <XCircle size={18}/> Заявка отклонена{app.reject_reason?": "+app.reject_reason:""}
+            <XCircle size={18}/>{t(" Заявка отклонена")}{app.reject_reason?": "+app.reject_reason:""}
           </div>
         )}
         <button className="btn btn-outline" style={{marginTop:24}} onClick={()=>sb.auth.signOut()}>
-          <LogOut size={16}/> Выйти
-        </button>
+          <LogOut size={16}/>{t(" Выйти")}</button>
       </div>
     </div>
   );
@@ -448,6 +458,7 @@ function PendingScreen({ app, userId, onApplied }: { app: PartnerApp|null; userI
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 function App() {
+  useLang();
   const [user, setUser] = useState<User|null>(null);
   const [role, setRole] = useState<Role>("");
   const [app, setApp] = useState<PartnerApp|null>(null);
@@ -461,6 +472,7 @@ function App() {
   const [itinEntry, setItinEntry] = useState("");
   const [itinAssignedOn, setItinAssignedOn] = useState("");
   const [irsEvents, setIrsEvents] = useState<IrsEvent[]>([]);
+  const [itinApp, setItinApp] = useState<ItinApplication|null>(null);
   const [showClosed, setShowClosed] = useState(false);
   const [allCompanies, setAllCompanies] = useState<Company[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -605,10 +617,12 @@ function App() {
     setClientDocs(c.data||[]);
     setDocumentReviewProposals(reviewProposals.data||[]);
     setPartnerDocs(p.data||[]);
-    const [{ data: ir }, { data: events }] = await Promise.all([
+    const [{ data: ir }, { data: events }, { data: w7 }] = await Promise.all([
       sb.from("order_itin").select("*").eq("order_id",orderId).maybeSingle(),
       sb.from("itin_irs_events").select("*").eq("order_id",orderId).order("created_at",{ascending:false}),
+      sb.from("itin_applications").select("*").eq("order_id",orderId).maybeSingle(),
     ]);
+    setItinApp((w7 as ItinApplication)||null);
     setItinRecord(ir||null);
     setItinEntry(ir?.itin||"");
     setItinAssignedOn(ir?.assigned_on||"");
@@ -655,50 +669,52 @@ function App() {
       const money = moneyErrorMessage(error.message, (error as { details?: string }).details);
       const messages: Record<string,string> = {
         ...(money ? { [error.message]: money } : {}),
-        "Operation id reused":"Действие уже обработано, обновите страницу",
-        "Field too long":"Слишком длинное значение (имя ≤ 200, страна ≤ 100, компания ≤ 200, деятельность ≤ 1000)",
-        "Invalid characters":"Уберите символы < и >",
-        "Order setup incomplete":"Анкета не заполнена: владельцы, доли 100%, ответственный, данные компании, паспорта",
-        "Invalid partner":"Этот партнёр не подходит для заказа",
-        "Not released": role==="partner"?"Заказ ещё не передан в работу":"Заказ не оплачен",
-        "Partner ITIN required":"Внесите номер ITIN",
-        "Partner ITIN letter required":"Загрузите и отправьте письмо IRS (CP565)",
-        "ITIN required":"Одобрите номер ITIN",
-        "ITIN letter required":"Передайте клиенту письмо IRS (CP565)",
-        "ITIN format must be 9XX-XX-XXXX":"Номер ITIN в формате 9XX-XX-XXXX",
-        "Eligibility already decided":"Решение по основанию уже принято",
-        "Partner must be CAA/CPA":"Для ITIN + декларации нужен партнёр CAA/CPA",
-        "Partner must be CAA":"Для ITIN нужен партнёр с квалификацией CAA",
-        "Not at IRS stage":"Действие доступно на этапе «Отправлено в IRS»",
-        "Too many attempts":"Превышено число попыток подачи",
-        "Document replaced":"Документ уже заменён клиентом",
-        "No proposal":"Предложение уже обработано — обновите страницу",
+        "Operation id reused":t("Действие уже обработано, обновите страницу"),
+        "Field too long":t("Слишком длинное значение (имя ≤ 200, страна ≤ 100, компания ≤ 200, деятельность ≤ 1000)"),
+        "Invalid characters":t("Уберите символы < и >"),
+        "Order setup incomplete":t("Анкета не заполнена: владельцы, доли 100%, ответственный, данные компании, паспорта"),
+        "Invalid partner":t("Этот партнёр не подходит для заказа"),
+        "Not released": role==="partner"?t("Заказ ещё не передан в работу"):t("Заказ не оплачен"),
+        "Partner ITIN required":t("Внесите номер ITIN"),
+        "Partner ITIN letter required":t("Загрузите и отправьте письмо IRS (CP565)"),
+        "ITIN required":t("Одобрите номер ITIN"),
+        "ITIN letter required":t("Передайте клиенту письмо IRS (CP565)"),
+        "ITIN format must be 9XX-XX-XXXX":t("Номер ITIN в формате 9XX-XX-XXXX"),
+        "Eligibility already decided":t("Решение по основанию уже принято"),
+        "Partner must be CAA/CPA":t("Для ITIN + декларации нужен партнёр CAA/CPA"),
+        "Partner must be CAA":t("Для ITIN нужен партнёр с квалификацией CAA"),
+        "Not at IRS stage":t("Действие доступно на этапе «Отправлено в IRS»"),
+        "Too many attempts":t("Превышено число попыток подачи"),
+        "Document replaced":t("Документ уже заменён клиентом"),
+        "No proposal":t("Предложение уже обработано — обновите страницу"),
+        "ITIN application required":t("Клиент ещё не отправил анкету ITIN (W-7)"),
+        "Application not submitted":t("Анкета ещё не отправлена клиентом"),
         ...CONSULT_ERRORS,
       };
-      toast("error", messages[error.message] || (error.message==="Payment required" ? (role==="partner"?"Заказ ещё не передан в работу":"Сначала нужна оплата") :
-        error.message==="Eligibility approval required" ? "Сначала подтвердите основание ITIN" :
-        error.message==="Partner eligibility approval required" ? "Основание ITIN ещё не подтверждено администратором" :
-        error.message==="Admin only" ? "Только для администратора" :
-        error.message==="Waiting for partner" ? "Партнёр ещё не дошёл до этого этапа" :
-        error.message==="Partner EIN required" ? "Сначала внесите EIN в «Данные компании»" :
-        error.message==="Partner documents required" ? "Загрузите и отправьте Articles, письмо EIN и Operating Agreement" :
-        error.message==="Proposal outdated" ? "Предложение устарело, обновите страницу" :
-        error.message==="Order closed" ? "Заказ закрыт" :
-        error.message==="Order cancelled" ? "Заказ отменён" :
-        error.message==="Status changed" ? "Статус уже изменился — страница обновлена, проверьте ещё раз" :
-        error.message==="Already filed" ? "Нельзя отменить: документы уже поданы (у клиента или у партнёра)" :
-        error.message==="Reason required" ? "Укажите причину" :
-        error.message==="Amount must be positive" ? "Сумма должна быть больше нуля" :
-        error.message==="MFA required" ? "Нужен вход с кодом из приложения-аутентификатора" :
-        error.message==="Company EIN required" ? "Нужны EIN и одобрение данных компании администратором" :
-        error.message==="Final documents required" ? "Передайте клиенту Articles, письмо EIN и Operating Agreement" :
-        error.message==="EIN format must be 12-3456789" ? "EIN в формате 12-3456789" :
-        error.message==="Invalid registration date" ? "Укажите дату регистрации (не в будущем)" :
-        "Не удалось выполнить действие"));
+      toast("error", messages[error.message] || (error.message==="Payment required" ? (role==="partner"?t("Заказ ещё не передан в работу"):t("Сначала нужна оплата")) :
+        error.message==="Eligibility approval required" ? t("Сначала подтвердите основание ITIN") :
+        error.message==="Partner eligibility approval required" ? t("Основание ITIN ещё не подтверждено администратором") :
+        error.message==="Admin only" ? t("Только для администратора") :
+        error.message==="Waiting for partner" ? t("Партнёр ещё не дошёл до этого этапа") :
+        error.message==="Partner EIN required" ? t("Сначала внесите EIN в «Данные компании»") :
+        error.message==="Partner documents required" ? t("Загрузите и отправьте Articles, письмо EIN и Operating Agreement") :
+        error.message==="Proposal outdated" ? t("Предложение устарело, обновите страницу") :
+        error.message==="Order closed" ? t("Заказ закрыт") :
+        error.message==="Order cancelled" ? t("Заказ отменён") :
+        error.message==="Status changed" ? t("Статус уже изменился — страница обновлена, проверьте ещё раз") :
+        error.message==="Already filed" ? t("Нельзя отменить: документы уже поданы (у клиента или у партнёра)") :
+        error.message==="Reason required" ? t("Укажите причину") :
+        error.message==="Amount must be positive" ? t("Сумма должна быть больше нуля") :
+        error.message==="MFA required" ? t("Нужен вход с кодом из приложения-аутентификатора") :
+        error.message==="Company EIN required" ? t("Нужны EIN и одобрение данных компании администратором") :
+        error.message==="Final documents required" ? t("Передайте клиенту Articles, письмо EIN и Operating Agreement") :
+        error.message==="EIN format must be 12-3456789" ? t("EIN в формате 12-3456789") :
+        error.message==="Invalid registration date" ? t("Укажите дату регистрации (не в будущем)") :
+        t("Не удалось выполнить действие")));
       await loadOrders();
       if (selected) await loadDocs(selected.id);
     } else {
-      toast(data==="already_done" ? "info" : "success", data==="already_done" ? "Уже выполнено ранее" : successMsg);
+      toast(data==="already_done" ? "info" : "success", data==="already_done" ? t("Уже выполнено ранее") : successMsg);
       const prevId = selected?.id;
       await loadOrders();
       if (prevId) {
@@ -716,29 +732,29 @@ function App() {
 
   async function openDoc(path: string) {
     const { data, error } = await sb.storage.from("documents").createSignedUrl(path, 60);
-    if (error) toast("error", "Не удалось открыть документ");
+    if (error) toast("error", t("Не удалось открыть документ"));
     else window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   }
 
   async function uploadPartnerDoc(file: File) {
     if (!selected||!user) return;
     const myPartner = partners.find(p => p.profile_id===user.id);
-    if (!myPartner) { toast("error", "Профиль партнёра не найден. Обратитесь к администратору."); return; }
+    if (!myPartner) { toast("error", t("Профиль партнёра не найден. Обратитесь к администратору.")); return; }
     if (!["application/pdf","image/jpeg","image/png"].includes(file.type) || file.size > 10*1024*1024) {
-      toast("error", "Только PDF, JPG или PNG до 10 МБ"); return;
+      toast("error", t("Только PDF, JPG или PNG до 10 МБ")); return;
     }
     setBusy(true);
     const ext = file.name.split(".").pop();
     const path = `${selected.id}/${crypto.randomUUID()}.${ext}`;
     const { error: upErr } = await sb.storage.from("documents").upload(path, file, { contentType: file.type, upsert: false });
-    if (upErr) { toast("error", "Не удалось загрузить файл"); setBusy(false); return; }
+    if (upErr) { toast("error", t("Не удалось загрузить файл")); setBusy(false); return; }
     const { error: dbErr } = await sb.from("partner_documents").insert({
       order_id: selected.id, partner_id: myPartner.id, uploaded_by: user.id,
       path, name: file.name, mime_type: file.type, size_bytes: file.size,
       note: partnerNote.trim()||null, doc_type: docType,
     });
-    if (dbErr) toast("error", "Не удалось сохранить документ");
-    else { toast("success", `Загружено: ${DOC_TYPES[docType]}. Теперь нажмите «Отправить».`); await loadDocs(selected.id); setPartnerNote(""); }
+    if (dbErr) toast("error", t("Не удалось сохранить документ"));
+    else { toast("success", t("Загружено: {0}. Теперь нажмите «Отправить».", { 0: DOC_TYPES[docType] })); await loadDocs(selected.id); setPartnerNote(""); }
     setBusy(false);
   }
 
@@ -762,22 +778,17 @@ function App() {
     return { status: next, label: STATUS[next]||next };
   }
 
-  if (loading) return <div className="full-page"><p style={{color:"#667085"}}>Загрузка…</p></div>;
+  if (loading) return <div className="full-page"><p style={{color:"#667085"}}>{t("Загрузка…")}</p></div>;
   if (!user) return <LoginScreen onAuth={u=>setUser(u)}/>;
   if (needMfa) return <MfaChallenge onDone={()=>{ setNeedMfa(false); bootstrap(); }}/>;
   if (!role) return <PendingScreen app={app} userId={user.id} onApplied={bootstrap}/>;
   if (app?.status==="rejected") return <PendingScreen app={app}/>;
 
   const pendingApps = applications.filter(a=>a.status==="pending");
-  // После одобрения консультации заказ становится обычным ITIN, но специалист остаётся назначен,
-  // пока админ не передаст его CAA/CPA. Специалисту в это время действия ITIN не показываем.
-  const selectedPartnerIsSpecialist = !!selected && partners.find(p=>p.id===selected.partner_id)?.qualification==="SPECIALIST";
-  const specialistHandoff = role==="partner" && !!selected && selected.product!=="itin_consult" && selectedPartnerIsSpecialist
-    && partners.find(p=>p.id===selected.partner_id)?.profile_id===user.id;
 
   return (
     <div className="shell">
-      {tab==="orders"&&<a className="skip-link" href="#order-detail">Перейти к заказу</a>}
+      {tab==="orders"&&<a className="skip-link" href="#order-detail">{t("Перейти к заказу")}</a>}
       <Toasts toasts={toasts}/>
       {showMfa&&<MfaSetup onClose={()=>setShowMfa(false)}/>}
       {confirm && <ConfirmDialog c={confirm} onCancel={()=>setConfirm(null)}/>}
@@ -788,20 +799,18 @@ function App() {
           {role==="admin" && (
             <div className="nav-tabs">
               <button className={tab==="orders"?"active":""} onClick={()=>setTab("orders")}>
-                <ClipboardList size={14} style={{marginRight:5,verticalAlign:-2}}/> Заказы
-              </button>
+                <ClipboardList size={14} style={{marginRight:5,verticalAlign:-2}}/>{t(" Заказы")}</button>
               <button className={tab==="operations"?"active":""} onClick={()=>setTab("operations")}>
-                <ShieldCheck size={14} style={{marginRight:5,verticalAlign:-2}}/> Управление
-              </button>
+                <ShieldCheck size={14} style={{marginRight:5,verticalAlign:-2}}/>{t(" Управление")}</button>
               <button className={tab==="applications"?"active":""} onClick={()=>{ setTab("applications"); loadApplications(); }}>
-                <Users size={14} style={{marginRight:5,verticalAlign:-2}}/> Заявки
-                {pendingApps.length>0&&<span className="badge pending-el" style={{marginLeft:5}}>{pendingApps.length}</span>}
+                <Users size={14} style={{marginRight:5,verticalAlign:-2}}/>{t(" Заявки")}{pendingApps.length>0&&<span className="badge pending-el" style={{marginLeft:5}}>{pendingApps.length}</span>}
               </button>
             </div>
           )}
-          <button className="icon-btn" title="Двухфакторная защита" onClick={()=>setShowMfa(true)}><ShieldCheck size={17}/></button>
-          <span className="role-badge">{role==="admin"?"Администратор":"Партнёр"}</span>
-          <button className="icon-btn" onClick={()=>sb.auth.signOut()} title="Выйти"><LogOut size={17}/></button>
+          <LangSwitch/>
+          <button className="icon-btn" title={t("Двухфакторная защита")} onClick={()=>setShowMfa(true)}><ShieldCheck size={17}/></button>
+          <span className="role-badge">{role==="admin"?t("Администратор"):t("Партнёр")}</span>
+          <button className="icon-btn" onClick={()=>sb.auth.signOut()} title={t("Выйти")}><LogOut size={17}/></button>
         </div>
       </header>
 
@@ -809,7 +818,7 @@ function App() {
       {tab==="applications"&&role==="admin"&&(
         <div className="app-list">
           {applications.length===0&&(
-            <div className="empty-state"><Users size={40}/><h2>Нет заявок</h2><p>Новые заявки партнёров появятся здесь.</p></div>
+            <div className="empty-state"><Users size={40}/><h2>{t("Нет заявок")}</h2><p>{t("Новые заявки партнёров появятся здесь.")}</p></div>
           )}
           {applications.map(a=>(
             <div className="app-card" key={a.id}>
@@ -817,34 +826,32 @@ function App() {
                 <h3>{a.full_name}</h3>
                 <p>{a.qualification} · {fmt(a.created_at)}</p>
                 {a.bio&&<p style={{marginTop:4,color:"#475569"}}>{a.bio}</p>}
-                {a.reject_reason&&<p style={{color:"#a32828",marginTop:4}}>Причина: {a.reject_reason}</p>}
+                {a.reject_reason&&<p style={{color:"#a32828",marginTop:4}}>{t("Причина: ")}{a.reject_reason}</p>}
               </div>
               <span className={`badge ${a.status==="pending"?"pending-app":a.status==="approved"?"approved-app":"rejected-app"}`}>
-                {a.status==="pending"?"На рассмотрении":a.status==="approved"?"Одобрен":"Отклонён"}
+                {a.status==="pending"?t("На рассмотрении"):a.status==="approved"?t("Одобрен"):t("Отклонён")}
               </span>
               {a.status==="pending"&&(
                 <div className="app-actions">
                   <button className="btn btn-success btn-sm" disabled={busy}
                     onClick={()=>setConfirm({
-                      title:"Одобрить партнёра?",
-                      body:`${a.full_name} получит роль партнёра и доступ к назначенным заказам.`,
-                      confirmLabel:"Одобрить",
-                      onConfirm:()=>rpc("approve_partner_application",{p_app:a.id},"Партнёр одобрен")
+                      title:t("Одобрить партнёра?"),
+                      body:t("{0} получит роль партнёра и доступ к назначенным заказам.", { 0: a.full_name }),
+                      confirmLabel:t("Одобрить"),
+                      onConfirm:()=>rpc("approve_partner_application",{p_app:a.id},t("Партнёр одобрен"))
                     })}>
-                    <CheckCircle2 size={14}/> Одобрить
-                  </button>
+                    <CheckCircle2 size={14}/>{t(" Одобрить")}</button>
                   <button className="btn btn-danger btn-sm" disabled={busy}
                     onClick={()=>{
-                      const reason=prompt("Причина отказа (необязательно)")||"";
+                      const reason=prompt(t("Причина отказа (необязательно)"))||"";
                       setConfirm({
-                        title:"Отклонить заявку?",
-                        body:`Партнёру ${a.full_name} будет отказано в доступе.`,
-                        confirmLabel:"Отклонить",danger:true,
-                        onConfirm:()=>rpc("reject_partner_application",{p_app:a.id,p_reason:reason},"Заявка отклонена")
+                        title:t("Отклонить заявку?"),
+                        body:t("Партнёру {0} будет отказано в доступе.", { 0: a.full_name }),
+                        confirmLabel:t("Отклонить"),danger:true,
+                        onConfirm:()=>rpc("reject_partner_application",{p_app:a.id,p_reason:reason},t("Заявка отклонена"))
                       });
                     }}>
-                    <XCircle size={14}/> Отклонить
-                  </button>
+                    <XCircle size={14}/>{t(" Отклонить")}</button>
                 </div>
               )}
             </div>
@@ -860,35 +867,35 @@ function App() {
           <div className="app-list">
             <ProductPrices prices={productPrices} names={PROD} busy={busy}
               onSave={(product,cents)=>setConfirm({
-                title:`Цена ${PROD[product]||product}: ${usd(cents)}?`,
-                body:"Новая цена сразу применяется к оплате новых и неоплаченных заказов. Сначала обновите цену на сайте, чтобы суммы совпадали.",
-                confirmLabel:"Сохранить цену",
-                onConfirm:()=>rpc("set_product_price",{p_product:product,p_price_cents:cents},"Цена обновлена"),
+                title:t("Цена {0}: {1}?", { 0: PROD[product]||product, 1: usd(cents) }),
+                body:t("Новая цена сразу применяется к оплате новых и неоплаченных заказов. Сначала обновите цену на сайте, чтобы суммы совпадали."),
+                confirmLabel:t("Сохранить цену"),
+                onConfirm:()=>rpc("set_product_price",{p_product:product,p_price_cents:cents},t("Цена обновлена")),
               })}/>
             <RenewalPrices prices={renewalPrices} busy={busy}
               onSave={(state,renewal,fee)=>setConfirm({
-                title:`${state==="DE"?"Delaware":"Wyoming"}: обслуживание ${usd(renewal)}, госсбор ${usd(fee)} в год?`,
-                body:"Применяется к неоплаченным заказам со сроком 2–3 года. Оплаченные заказы не меняются: их состав зафиксирован.",
-                confirmLabel:"Сохранить",
-                onConfirm:()=>rpc("set_renewal_price",{p_state:state,p_renewal_cents:renewal,p_state_fee_cents:fee},"Цены продления обновлены"),
+                title:t("{0}: обслуживание {1}, госсбор {2} в год?", { 0: state==="DE"?"Delaware":"Wyoming", 1: usd(renewal), 2: usd(fee) }),
+                body:t("Применяется к неоплаченным заказам со сроком 2–3 года. Оплаченные заказы не меняются: их состав зафиксирован."),
+                confirmLabel:t("Сохранить"),
+                onConfirm:()=>rpc("set_renewal_price",{p_state:state,p_renewal_cents:renewal,p_state_fee_cents:fee},t("Цены продления обновлены")),
               })}/>
-            {ops.length===0&&<div className="empty-state"><ShieldCheck size={40}/><h2>Нет компаний на обслуживании</h2><p>Закрытые заказы LLC появятся здесь.</p></div>}
+            {ops.length===0&&<div className="empty-state"><ShieldCheck size={40}/><h2>{t("Нет компаний на обслуживании")}</h2><p>{t("Закрытые заказы LLC появятся здесь.")}</p></div>}
             {ops.map(o=>{
               const co = allCompanies.find(c=>c.order_id===o.id);
               const days = o.service_until ? Math.round((new Date(o.service_until+"T12:00:00").getTime()-Date.now())/86400000) : null;
               return (
                 <div className="app-card" key={o.id}>
                   <div className="app-info">
-                    <h3>{co?.name||o.applicant?.company||"Компания"}</h3>
-                    <p>{co?.state==="DE"?"Delaware":"Wyoming"} · EIN {co?.ein||"—"} · пакет {o.service_years||1} {(o.service_years||1)===1?"год":"года"}</p>
-                    <p>Обслуживание до {o.service_until?new Date(o.service_until+"T12:00:00").toLocaleDateString("ru-RU"):"—"}</p>
+                    <h3>{co?.name||o.applicant?.company||t("Компания")}</h3>
+                    <p>{co?.state==="DE"?"Delaware":"Wyoming"} · EIN {co?.ein||"—"}{t(" · пакет ")}{o.service_years||1} {(o.service_years||1)===1?t("год"):t("года")}</p>
+                    <p>{t("Обслуживание до ")}{o.service_until?new Date(o.service_until+"T12:00:00").toLocaleDateString(locale()):"—"}</p>
                   </div>
                   {days!==null&&(
                     <span className={`badge ${days<0?"pending-el":days<=60?"unpaid":"approved-el"}`}>
-                      {days<0?`Истёк ${-days} дн. назад`:days<=60?`Продление через ${days} дн.`:`Активно · ${days} дн.`}
+                      {days<0?t("Истёк {0} дн. назад", { 0: -days }):days<=60?t("Продление через {0} дн.", { 0: days }):t("Активно · {0} дн.", { 0: days })}
                     </span>
                   )}
-                  <button className="btn btn-outline btn-sm" onClick={()=>{ setSelected(o); setShowClosed(true); setTab("orders"); }}>Открыть</button>
+                  <button className="btn btn-outline btn-sm" onClick={()=>{ setSelected(o); setShowClosed(true); setTab("orders"); }}>{t("Открыть")}</button>
                 </div>
               );
             })}
@@ -901,42 +908,42 @@ function App() {
         <div className="workspace">
           <aside>
             <div className="aside-header">
-              <span className="aside-title">Реестр заказов</span>
+              <span className="aside-title">{t("Реестр заказов")}</span>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <span className="aside-count">{orders.length}</span>
-                <button className="icon-btn btn-sm" onClick={()=>loadOrders()} disabled={busy} title="Обновить">
+                <button className="icon-btn btn-sm" onClick={()=>loadOrders()} disabled={busy} title={t("Обновить")}>
                   <RefreshCw size={14}/>
                 </button>
               </div>
             </div>
             <div className="login-tabs" style={{marginBottom:10}}>
-              <button className={!showClosed?"active":""} onClick={()=>setShowClosed(false)}>В работе</button>
-              <button className={showClosed?"active":""} onClick={()=>setShowClosed(true)}>Закрытые</button>
+              <button className={!showClosed?"active":""} onClick={()=>setShowClosed(false)}>{t("В работе")}</button>
+              <button className={showClosed?"active":""} onClick={()=>setShowClosed(true)}>{t("Закрытые")}</button>
             </div>
             <div className="search-box">
               <Search size={15} color="#94a3b8"/>
-              <input aria-label="Поиск заказов" placeholder="Поиск…" value={query} onChange={e=>setQuery(e.target.value)}/>
+              <input aria-label={t("Поиск заказов")} placeholder={t("Поиск…")} value={query} onChange={e=>setQuery(e.target.value)}/>
             </div>
-            {filtered.length===0&&<div className="ledger-empty"><h3>{query?"Ничего не найдено":"Заказов пока нет"}</h3><p>{query?"Измените запрос или проверьте вкладку закрытых заказов.":role==="partner"?"Назначенные вам заказы появятся здесь. По вопросам назначения обратитесь к администратору.":"Новые заказы появятся после заполнения клиентом заявки."}</p></div>}
+            {filtered.length===0&&<div className="ledger-empty"><h3>{query?t("Ничего не найдено"):t("Заказов пока нет")}</h3><p>{query?t("Измените запрос или проверьте вкладку закрытых заказов."):role==="partner"?t("Назначенные вам заказы появятся здесь. По вопросам назначения обратитесь к администратору."):t("Новые заказы появятся после заполнения клиентом заявки.")}</p></div>}
             {filtered.map(o=>(
               <OrderLedgerEntry key={o.id}
-                title={o.applicant?.company||o.applicant?.name||"Без названия"}
+                title={o.applicant?.company||o.applicant?.name||t("Без названия")}
                 product={PROD[o.product]||o.product}
-                status={o.cancelled_at?"Отменён":o.closed_at?"Закрыт":STATUS[viewOrder(o).status]||o.status}
+                status={o.cancelled_at?t("Отменён"):o.closed_at?t("Закрыт"):STATUS[viewOrder(o).status]||o.status}
                 active={selected?.id===o.id} updated={updatedId===o.id} onSelect={()=>setSelected(o)}>
-                  {o.cancelled_at ? <span className="badge pending-el">Отменён</span> : o.closed_at&&<span className="badge approved-el">Закрыт</span>}
+                  {o.cancelled_at ? <span className="badge pending-el">{t("Отменён")}</span> : o.closed_at&&<span className="badge approved-el">{t("Закрыт")}</span>}
                   {role==="admin"&&(proposals.some(p=>p.order_id===o.id)||eligibilityProposals.some(p=>p.order_id===o.id)||specialistProposals.some(p=>p.order_id===o.id)||pendingReviewOrderIds.includes(o.id))&&(
-                    <span className="badge doc-review">Ждёт вашего подтверждения</span>
+                    <span className="badge doc-review">{t("Ждёт вашего подтверждения")}</span>
                   )}
-                  {o.product==="itin_consult" ? <span className="badge status">Консультация{role==="admin"&&!o.partner_id&&!o.closed_at&&o.status!=="draft"?" · нужен специалист":""}</span> :
+                  {o.product==="itin_consult" ? <span className="badge status">{t("Консультация")}{role==="admin"&&!o.partner_id&&!o.closed_at&&o.status!=="draft"?t(" · нужен специалист"):""}</span> :
                   role==="admin" ? <span className={`badge ${o.payment_status==="paid"?"paid":"unpaid"}`}>
-                    {o.payment_status==="paid"?"Оплачено":"Ожидает оплаты"}
+                    {o.payment_status==="paid"?t("Оплачено"):t("Ожидает оплаты")}
                   </span> : <span className={`badge ${o.in_work?"paid":"unpaid"}`}>
-                    {o.in_work?"В работе":"Ожидает передачи в работу"}
+                    {o.in_work?t("В работе"):t("Ожидает передачи в работу")}
                   </span>}
                   {o.product!=="itin_consult"&&(o.product.includes("itin")||o.product.includes("bundle"))&&(
                     <span className={`badge ${o.eligibility==="approved"?"approved-el":o.eligibility==="rejected"?"pending-el":"unpaid"}`}>
-                      ITIN: {o.eligibility==="approved"?"✓ Одобрен":o.eligibility==="rejected"?"✗ Отклонён":"На проверке"}
+                      ITIN: {o.eligibility==="approved"?t("✓ Одобрен"):o.eligibility==="rejected"?t("✗ Отклонён"):t("На проверке")}
                     </span>
                   )}
               </OrderLedgerEntry>
@@ -945,19 +952,19 @@ function App() {
 
           <main className="detail" id="order-detail">
             {!selected?(
-              <div className="empty-state"><FileText size={42}/><h2>Выберите заказ</h2><p>Откройте заказ в реестре, чтобы посмотреть этапы, документы и доступные действия.</p></div>
+              <div className="empty-state"><FileText size={42}/><h2>{t("Выберите заказ")}</h2><p>{t("Откройте заказ в реестре, чтобы посмотреть этапы, документы и доступные действия.")}</p></div>
             ):(
               <>
                 {/* Head */}
                 <div className="detail-head">
                   <div>
-                    <span className="eyebrow">Заказ {selected.id.slice(0,8)}</span>
-                    <h1>{selected.applicant?.company||selected.applicant?.name||"Заказ"}</h1>
-                    <p>{PROD[selected.product]||selected.product} · создан {fmt(selected.created_at)}</p>
+                    <span className="eyebrow">{t("Заказ ")}{selected.id.slice(0,8)}</span>
+                    <h1>{selected.applicant?.company||selected.applicant?.name||t("Заказ")}</h1>
+                    <p>{PROD[selected.product]||selected.product}{t(" · создан ")}{fmt(selected.created_at)}</p>
                     {selected.partner_id&&(
                       <div className="assigned-chip">
                         <UserCheck size={14}/>
-                        {partners.find(p=>p.id===selected.partner_id)?.display_name||"Партнёр назначен"}
+                        {partners.find(p=>p.id===selected.partner_id)?.display_name||t("Партнёр назначен")}
                       </div>
                     )}
                   </div>
@@ -965,61 +972,54 @@ function App() {
                 </div>
 
                 {selected.cancelled_at&&(
-                  <div className="alert danger"><XCircle size={16}/> Заказ отменён {fmt(selected.cancelled_at)}{selected.cancel_reason?`: ${selected.cancel_reason}`:""}</div>
+                  <div className="alert danger"><XCircle size={16}/>{t(" Заказ отменён ")}{fmt(selected.cancelled_at)}{selected.cancel_reason?`: ${selected.cancel_reason}`:""}</div>
                 )}
                 {milestones.map(m=>(
                   <div key={m.milestone} className="alert info">
-                    <ShieldCheck size={16}/> {m.milestone==="state_filed"?"Документы поданы в штат":"W-7 отправлена в IRS"} {fmt(m.recorded_at)}
-                    {m.partner_id&&role==="admin"?` · ${partners.find(p=>p.id===m.partner_id)?.display_name||"партнёр"}`:""}. Повторно не подавать.
-                  </div>
+                    <ShieldCheck size={16}/> {m.milestone==="state_filed"?t("Документы поданы в штат"):t("W-7 отправлена в IRS")} {fmt(m.recorded_at)}
+                    {m.partner_id&&role==="admin"?` · ${partners.find(p=>p.id===m.partner_id)?.display_name||t("партнёр")}`:""}{t(". Повторно не подавать.")}</div>
                 ))}
 
                 {selected.product==="itin_consult" ? (
                   <ConsultPanel order={selected} role={role as "admin"|"partner"} partners={partners}
                     proposal={specialistProposals.find(p=>p.order_id===selected.id)||null}
                     busy={busy} rpc={rpc} askConfirm={setConfirm}/>
-                ) : specialistHandoff ? (
-                  <div className="alert info"><CheckCircle2 size={16}/> Консультация завершена: администратор подтвердил план «{PROD[selected.product]||selected.product}». Заказ передаётся партнёру CAA/CPA, действий для специалиста нет.</div>
                 ) : (<>
-                {role==="admin"&&selectedPartnerIsSpecialist&&(
-                  <div className="alert warn"><AlertCircle size={16}/> После консультации назначен специалист. Назначьте {selected.product==="itin_return"?"партнёра CAA/CPA":"партнёра CAA или CAA/CPA"} в блоке «Назначить CAA/CPA».</div>
-                )}
                 {/* Status tracker */}
                 <ReviewState confirmed={STATUS[selected.status]||selected.status}
-                  terminal={selected.cancelled_at?"Отменён":selected.closed_at?"Закрыт":undefined}
+                  terminal={selected.cancelled_at?t("Отменён"):selected.closed_at?t("Закрыт"):undefined}
                   proposals={proposals.filter(p=>p.order_id===selected.id&&p.proposed_status!==(p.stream==="itin"?selected.itin_status:selected.status))
-                    .map(p=>({label:p.stream==="itin"?"ITIN":"Основной процесс",value:STATUS[p.proposed_status]||p.proposed_status}))}/>
+                    .map(p=>({label:p.stream==="itin"?"ITIN":t("Основной процесс"),value:STATUS[p.proposed_status]||p.proposed_status}))}/>
                 <StatusTracker order={selected}/>
 
                 {/* Alerts */}
                 {role==="admin"&&selected.payment_status!=="paid"&&(
                   <div className="alert warn">
                     <AlertCircle size={16}/>
-                    {role==="admin"?"Заказ не оплачен. Отметьте оплату вручную после получения перевода.":"Ожидается оплата от клиента."}
+                    {role==="admin"?t("Заказ не оплачен. Отметьте оплату вручную после получения перевода."):t("Ожидается оплата от клиента.")}
                   </div>
                 )}
                 {selected.eligibility==="rejected"&&(
                   <div className="alert danger">
-                    <XCircle size={16}/> ITIN отклонён: {selected.eligibility_note||"причина не указана"}
+                    <XCircle size={16}/>{t(" ITIN отклонён: ")}{selected.eligibility_note||t("причина не указана")}
                   </div>
                 )}
                 {role==="admin"&&selected.product.startsWith("bundle")&&selected.eligibility==="rejected"&&!refunds.some(r=>r.scope==="itin"&&r.amount_cents===10000)&&(
                   <div className="alert warn">
-                    <AlertCircle size={16}/> Верните клиенту $100 (доля ITIN).
-                    <button className="btn btn-outline btn-sm" onClick={()=>{
-                      setRefundAmount("100"); setRefundScope("itin"); setRefundReason("Отказ в основании ITIN");
+                    <AlertCircle size={16}/>{t(" Верните клиенту $100 (доля ITIN).")}<button className="btn btn-outline btn-sm" onClick={()=>{
+                      setRefundAmount("100"); setRefundScope("itin"); setRefundReason(t("Отказ в основании ITIN"));
                       document.getElementById("refund-entry")?.scrollIntoView({behavior:"smooth",block:"center"});
-                    }}>Записать возврат $100</button>
+                    }}>{t("Записать возврат $100")}</button>
                   </div>
                 )}
                 {selected.eligibility==="approved"&&(selected.product.includes("itin")||selected.product.includes("bundle"))&&(
-                  <div className="alert success"><CheckCircle2 size={16}/> Основание ITIN подтверждено</div>
+                  <div className="alert success"><CheckCircle2 size={16}/>{t(" Основание ITIN подтверждено")}</div>
                 )}
 
                 <div className="grid-2">
                   {/* Анкета */}
                   <div className="card">
-                    <h2>Анкета клиента</h2>
+                    <h2>{t("Анкета клиента")}</h2>
                     <dl>
                       {Object.entries(selected.applicant||{}).map(([k,v])=>(
                         <div key={k}><dt>{k}</dt><dd>{v||"—"}</dd></div>
@@ -1029,59 +1029,48 @@ function App() {
 
                   {/* Действия */}
                   <div className="card">
-                    <h2>Действия</h2>
+                    <h2>{t("Действия")}</h2>
 
                     {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&(
                       <div className="action-section">
-                        <div className="action-label">{role==="admin"?"Основание ITIN: решение администратора":"Основание ITIN"}</div>
+                        <div className="action-label">{role==="admin"?t("Основание ITIN: решение администратора"):t("Основание ITIN")}</div>
                         {eligibilityProposals.find(p=>p.order_id===selected.id)&&(()=>{
                           const proposal=eligibilityProposals.find(p=>p.order_id===selected.id)!;
                           return <div className="alert warn" style={{marginBottom:10}}>
-                            <AlertCircle size={15}/> {role==="admin"?"Партнёр предлагает:":"Ваше решение отправлено:"} {proposal.decision==="approve"?"одобрить":"отклонить"}
+                            <AlertCircle size={15}/> {role==="admin"?t("Партнёр предлагает:"):t("Ваше решение отправлено:")} {proposal.decision==="approve"?t("одобрить"):t("отклонить")}
                             {proposal.reason&&<span> · {proposal.reason}</span>}
                           </div>;
                         })()}
                         {role==="partner"&&!eligibilityProposals.some(p=>p.order_id===selected.id)&&(selected.eligibility==="pending"||(selected.product.startsWith("bundle")&&selected.eligibility==="approved"))&&(
                           <div className="doc-actions">
                             <button className="btn btn-success btn-sm" disabled={busy}
-                              onClick={()=>rpc("propose_eligibility",{p_order:selected.id,p_decision:"approve",p_reason:null,p_op:crypto.randomUUID()},"Ваше решение отправлено")}>
-                              Предложить: основание подтверждено
-                            </button>
+                              onClick={()=>rpc("propose_eligibility",{p_order:selected.id,p_decision:"approve",p_reason:null,p_op:crypto.randomUUID()},t("Ваше решение отправлено"))}>{t("Предложить: основание подтверждено")}</button>
                             <button className="btn btn-danger btn-sm" disabled={busy}
                               onClick={()=>{
-                                const reason=prompt("Почему основание ITIN не подходит?");
-                                if(reason?.trim()) rpc("propose_eligibility",{p_order:selected.id,p_decision:"reject",p_reason:reason.trim(),p_op:crypto.randomUUID()},"Ваше решение отправлено");
-                              }}>
-                              Предложить отказ
-                            </button>
+                                const reason=prompt(t("Почему основание ITIN не подходит?"));
+                                if(reason?.trim()) rpc("propose_eligibility",{p_order:selected.id,p_decision:"reject",p_reason:reason.trim(),p_op:crypto.randomUUID()},t("Ваше решение отправлено"));
+                              }}>{t("Предложить отказ")}</button>
                           </div>
                         )}
                         {role==="admin"&&eligibilityProposals.some(p=>p.order_id===selected.id)&&(
                           <div className="doc-actions">
                             <button className="btn btn-success btn-sm" disabled={busy}
-                              onClick={()=>rpc("confirm_eligibility",{p_order:selected.id,p_op:crypto.randomUUID()},"Решение по основанию подтверждено")}>
-                              <Check size={13}/> Подтвердить
-                            </button>
+                              onClick={()=>rpc("confirm_eligibility",{p_order:selected.id,p_op:crypto.randomUUID()},t("Решение по основанию подтверждено"))}>
+                              <Check size={13}/>{t(" Подтвердить")}</button>
                             <button className="btn btn-outline btn-sm" disabled={busy}
-                              onClick={()=>rpc("return_eligibility_proposal",{p_order:selected.id},"Предложение возвращено партнёру")}>
-                              Вернуть
-                            </button>
+                              onClick={()=>rpc("return_eligibility_proposal",{p_order:selected.id},t("Предложение возвращено партнёру"))}>{t("Вернуть")}</button>
                           </div>
                         )}
                         {role==="admin"&&selected.eligibility!=="approved"&&(
                           <button className="btn btn-success btn-full" disabled={busy} style={{marginTop:8}}
-                            onClick={()=>rpc("approve_eligibility",{p_order:selected.id},"Основание одобрено; ITIN-клиент уведомлён")}>
-                            Решить самому: одобрить
-                          </button>
+                            onClick={()=>rpc("approve_eligibility",{p_order:selected.id},t("Основание одобрено; ITIN-клиент уведомлён"))}>{t("Решить самому: одобрить")}</button>
                         )}
                         {role==="admin"&&selected.eligibility!=="rejected"&&(
                           <button className="btn btn-danger btn-full" disabled={busy} style={{marginTop:8}}
                             onClick={()=>{
-                              const reason=prompt("Причина отказа в основании ITIN");
-                              if(reason?.trim()) rpc("reject_eligibility",{p_order:selected.id,p_reason:reason.trim()},"Основание отклонено; ITIN-клиент уведомлён");
-                            }}>
-                            Решить самому: отклонить
-                          </button>
+                              const reason=prompt(t("Причина отказа в основании ITIN"));
+                              if(reason?.trim()) rpc("reject_eligibility",{p_order:selected.id,p_reason:reason.trim()},t("Основание отклонено; ITIN-клиент уведомлён"));
+                            }}>{t("Решить самому: отклонить")}</button>
                         )}
                       </div>
                     )}
@@ -1090,8 +1079,8 @@ function App() {
                     {selected.closed_at&&(
                       <div className="action-section">
                         <div className="assigned-chip" style={{background:"#f0fdf4",color:"#15803d"}}>
-                          <CheckCircle2 size={14}/> Заказ закрыт {fmt(selected.closed_at)}
-                          {role==="admin"&&selected.service_until&&<span style={{color:"#667085",marginLeft:4}}>· обслуживание до {new Date(selected.service_until+"T12:00:00").toLocaleDateString("ru-RU")}</span>}
+                          <CheckCircle2 size={14}/>{t(" Заказ закрыт ")}{fmt(selected.closed_at)}
+                          {role==="admin"&&selected.service_until&&<span style={{color:"#667085",marginLeft:4}}>{t("· обслуживание до ")}{new Date(selected.service_until+"T12:00:00").toLocaleDateString(locale())}</span>}
                         </div>
                       </div>
                     )}
@@ -1109,15 +1098,15 @@ function App() {
                         const noPartner = !selected.partner_id;
                         return (
                           <div className="action-section" key={stream}>
-                            <div className="action-label">{stream==="itin"?"Следующий этап ITIN":"Следующий этап"}</div>
+                            <div className="action-label">{stream==="itin"?t("Следующий этап ITIN"):t("Следующий этап")}</div>
                             {role==="partner"&&(
                               <>
                                 <button className="next-step-btn" disabled={busy}
                                   onClick={()=>setConfirm({
-                                    title:`Перевести в «${label}»?`,
-                                    body: STEP_HINTS[next]||"Подтвердите переход на следующий этап.",
-                                    confirmLabel:"Перевести",
-                                    onConfirm:()=>rpc("propose_status",{p_order:selected.id,p_stream:stream,p_to:next,p_op:crypto.randomUUID()},`Статус → ${label}`)
+                                    title:t("Перевести в «{0}»?", { 0: label }),
+                                    body: STEP_HINTS[next]||t("Подтвердите переход на следующий этап."),
+                                    confirmLabel:t("Перевести"),
+                                    onConfirm:()=>rpc("propose_status",{p_order:selected.id,p_stream:stream,p_to:next,p_op:crypto.randomUUID()},t("Статус → {0}", { 0: label }))
                                   })}>
                                   <span>{label}</span><span className="step-arrow"><ArrowRight size={13}/></span>
                                 </button>
@@ -1128,27 +1117,27 @@ function App() {
                               <>
                                 <button className="next-step-btn" disabled={busy||(!partnerAhead&&!noPartner)}
                                   onClick={()=>setConfirm({
-                                    title:`Уведомить клиента: «${label}»?`,
-                                    body:"Клиент сразу увидит новый статус в своём кабинете.",
-                                    confirmLabel:"Подтвердить",
-                                    onConfirm:()=>rpc("confirm_status",{p_order:selected.id,p_stream:stream,p_to:next,p_op:crypto.randomUUID()},`Клиент видит: ${label}`)
+                                    title:t("Уведомить клиента: «{0}»?", { 0: label }),
+                                    body:t("Клиент сразу увидит новый статус в своём кабинете."),
+                                    confirmLabel:t("Подтвердить"),
+                                    onConfirm:()=>rpc("confirm_status",{p_order:selected.id,p_stream:stream,p_to:next,p_op:crypto.randomUUID()},t("Клиент видит: {0}", { 0: label }))
                                   })}>
-                                  <span>{partnerAhead||noPartner?`Подтвердить: ${label}`:`Ждём партнёра: ${label}`}</span>
+                                  <span>{partnerAhead||noPartner?t("Подтвердить: {0}", { 0: label }):t("Ждём партнёра: {0}", { 0: label })}</span>
                                   <span className="step-arrow"><ArrowRight size={13}/></span>
                                 </button>
                                 <div className="step-hint">
-                                  {partnerAhead ? `Партнёр на этапе «${STATUS[prop!.proposed_status]||prop!.proposed_status}» · клиент видит «${STATUS[clientCur]||clientCur}».`
-                                    : noPartner ? "Партнёр не назначен — можно переводить самостоятельно."
-                                    : "Кнопка станет активной, когда партнёр перейдёт на этот этап."}
+                                  {partnerAhead ? t("Партнёр на этапе «{0}» · клиент видит «{1}».", { 0: STATUS[prop!.proposed_status]||prop!.proposed_status, 1: STATUS[clientCur]||clientCur })
+                                    : noPartner ? t("Партнёр не назначен — можно переводить самостоятельно.")
+                                    : t("Кнопка станет активной, когда партнёр перейдёт на этот этап.")}
                                 </div>
                                 {partnerAhead&&(
                                   <button className="btn btn-danger btn-sm" style={{marginTop:8}} disabled={busy}
                                     onClick={()=>setConfirm({
-                                      title:"Вернуть партнёра к текущему этапу клиента?",
-                                      body:`Прогресс партнёра откатится до «${STATUS[clientCur]||clientCur}».`,
-                                      confirmLabel:"Вернуть",danger:true,
-                                      onConfirm:()=>rpc("reject_status_proposal",{p_order:selected.id,p_stream:stream},"Прогресс партнёра возвращён")
-                                    })}>↩ Вернуть партнёру</button>
+                                      title:t("Вернуть партнёра к текущему этапу клиента?"),
+                                      body:t("Прогресс партнёра откатится до «{0}».", { 0: STATUS[clientCur]||clientCur }),
+                                      confirmLabel:t("Вернуть"),danger:true,
+                                      onConfirm:()=>rpc("reject_status_proposal",{p_order:selected.id,p_stream:stream},t("Прогресс партнёра возвращён"))
+                                    })}>{t("↩ Вернуть партнёру")}</button>
                                 )}
                               </>
                             )}
@@ -1159,21 +1148,20 @@ function App() {
                     {/* Отмена (admin) */}
                     {role==="admin"&&!selected.closed_at&&(
                       <div className="action-section">
-                        <div className="action-label">Отмена заказа</div>
+                        <div className="action-label">{t("Отмена заказа")}</div>
                         {milestones.length>0 ? (
-                          <div className="step-hint">Отмена недоступна: документы уже поданы ({milestones.map(m=>m.milestone==="state_filed"?"в штат":"в IRS").join(", ")}).</div>
+                          <div className="step-hint">{t("Отмена недоступна: документы уже поданы (")}{milestones.map(m=>m.milestone==="state_filed"?t("в штат"):t("в IRS")).join(", ")}).</div>
                         ) : (
                           <>
-                            <textarea className="note-area" aria-label="Причина отмены заказа" placeholder="Причина отмены *" value={cancelReason} onChange={e=>setCancelReason(e.target.value)}/>
+                            <textarea className="note-area" aria-label={t("Причина отмены заказа")} placeholder={t("Причина отмены *")} value={cancelReason} onChange={e=>setCancelReason(e.target.value)}/>
                             <button className="btn btn-danger btn-full" style={{marginTop:6}} disabled={busy||cancelReason.trim().length<3}
                               onClick={()=>setConfirm({
-                                title:"Отменить заказ?",
-                                body:`Причина: «${cancelReason.trim()}». Отмена не возвращает деньги — сумму возврата запишите отдельно ниже.`,
-                                confirmLabel:"Отменить заказ",danger:true,
-                                onConfirm:()=>{ rpc("cancel_order",{p_order:selected.id,p_reason:cancelReason,p_op:crypto.randomUUID()},"Заказ отменён"); setCancelReason(""); }
+                                title:t("Отменить заказ?"),
+                                body:t("Причина: «{0}». Отмена не возвращает деньги — сумму возврата запишите отдельно ниже.", { 0: cancelReason.trim() }),
+                                confirmLabel:t("Отменить заказ"),danger:true,
+                                onConfirm:()=>{ rpc("cancel_order",{p_order:selected.id,p_reason:cancelReason,p_op:crypto.randomUUID()},t("Заказ отменён")); setCancelReason(""); }
                               })}>
-                              <XCircle size={15}/> Отменить заказ
-                            </button>
+                              <XCircle size={15}/>{t(" Отменить заказ")}</button>
                           </>
                         )}
                       </div>
@@ -1184,30 +1172,30 @@ function App() {
                     {role==="admin"&&selected.payment_status==="paid"&&(
                       <div className="action-section">
                         <PaymentLines lines={paymentLines} state={selected.product.endsWith("_de")?"DE":selected.product.endsWith("_wy")?"WY":null}/>
-                        <div className="action-label" id="refund-entry">Возврат средств</div>
+                        <div className="action-label" id="refund-entry">{t("Возврат средств")}</div>
                         {selected.amount_cents!=null&&(()=>{ const r=refunds.reduce((a,x)=>a+x.amount_cents,0);
-                          return <div className="step-hint" style={{marginBottom:8}}>Оплачено {usd(selected.amount_cents)}, уже возвращено {usd(r)}, доступно {usd(Math.max(0,selected.amount_cents-r))}</div>; })()}
+                          return <div className="step-hint" style={{marginBottom:8}}>{t("Оплачено ")}{usd(selected.amount_cents)}{t(", уже возвращено ")}{usd(r)}{t(", доступно ")}{usd(Math.max(0,selected.amount_cents-r))}</div>; })()}
                         <div style={{display:"flex",gap:8}}>
-                          <input className="partner-select" aria-label="Сумма возврата в долларах" style={{flex:1}} type="number" min={1} step="0.01" placeholder="Сумма, $" value={refundAmount} onChange={e=>setRefundAmount(e.target.value)}/>
-                          <select className="partner-select" aria-label="Часть заказа для возврата" style={{flex:1}} value={refundScope} onChange={e=>setRefundScope(e.target.value)}>
-                            <option value="order">Весь заказ</option>
+                          <input className="partner-select" aria-label={t("Сумма возврата в долларах")} style={{flex:1}} type="number" min={1} step="0.01" placeholder={t("Сумма, $")} value={refundAmount} onChange={e=>setRefundAmount(e.target.value)}/>
+                          <select className="partner-select" aria-label={t("Часть заказа для возврата")} style={{flex:1}} value={refundScope} onChange={e=>setRefundScope(e.target.value)}>
+                            <option value="order">{t("Весь заказ")}</option>
                             {(selected.product.startsWith("llc")||selected.product.startsWith("bundle"))&&<option value="llc">LLC</option>}
                             {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&<option value="itin">ITIN</option>}
-                            <option value="other">Другое</option>
+                            <option value="other">{t("Другое")}</option>
                           </select>
                         </div>
-                        <textarea className="note-area" aria-label="Причина и расчёт возврата" placeholder="Причина и расчёт возврата *" value={refundReason} onChange={e=>setRefundReason(e.target.value)}/>
+                        <textarea className="note-area" aria-label={t("Причина и расчёт возврата")} placeholder={t("Причина и расчёт возврата *")} value={refundReason} onChange={e=>setRefundReason(e.target.value)}/>
                         <button className="btn btn-outline btn-full" style={{marginTop:6}}
                           disabled={busy||!(Number(refundAmount)>0)||refundReason.trim().length<3}
                           onClick={()=>{
                             const cents = Math.round(Number(refundAmount)*100);
                             setConfirm({
-                              title:`Записать возврат $${(cents/100).toFixed(2)}?`,
-                              body:"Запись нельзя изменить или удалить. Клиент увидит её в кабинете. Сами деньги переводите отдельно.",
-                              confirmLabel:"Записать",
-                              onConfirm:()=>{ rpc("record_refund",{p_order:selected.id,p_amount_cents:cents,p_scope:refundScope,p_reason:refundReason,p_op:crypto.randomUUID()},"Возврат записан"); setRefundAmount(""); setRefundReason(""); }
+                              title:t("Записать возврат ${0}?", { 0: (cents/100).toFixed(2) }),
+                              body:t("Запись нельзя изменить или удалить. Клиент увидит её в кабинете. Сами деньги переводите отдельно."),
+                              confirmLabel:t("Записать"),
+                              onConfirm:()=>{ rpc("record_refund",{p_order:selected.id,p_amount_cents:cents,p_scope:refundScope,p_reason:refundReason,p_op:crypto.randomUUID()},t("Возврат записан")); setRefundAmount(""); setRefundReason(""); }
                             });
-                          }}>Записать возврат</button>
+                          }}>{t("Записать возврат")}</button>
                         {refunds.map(r=>(
                           <div key={r.id} className="step-hint">↩ ${(r.amount_cents/100).toFixed(2)} · {r.scope} · {fmt(r.created_at)} · {r.reason}</div>
                         ))}
@@ -1217,10 +1205,10 @@ function App() {
                     {/* Срок пакета (admin) */}
                     {role==="admin"&&!selected.product.startsWith("itin")&&(
                       <div className="action-section">
-                        <div className="action-label">Срок обслуживания</div>
+                        <div className="action-label">{t("Срок обслуживания")}</div>
                         <select className="partner-select" value={selected.service_years||1} disabled={busy}
-                          onChange={e=>rpc("set_service_years",{p_order:selected.id,p_years:Number(e.target.value)},"Срок пакета обновлён")}>
-                          {[1,2,3,4,5].map(y=><option key={y} value={y}>{y} {y===1?"год":y<5?"года":"лет"}</option>)}
+                          onChange={e=>rpc("set_service_years",{p_order:selected.id,p_years:Number(e.target.value)},t("Срок пакета обновлён"))}>
+                          {[1,2,3,4,5].map(y=><option key={y} value={y}>{y} {y===1?t("год"):y<5?t("года"):t("лет")}</option>)}
                         </select>
                       </div>
                     )}
@@ -1228,17 +1216,16 @@ function App() {
                     {/* Оплата */}
                     {role==="admin"&&selected.payment_status!=="paid"&&(
                       <div className="action-section">
-                        <div className="action-label">Оплата</div>
+                        <div className="action-label">{t("Оплата")}</div>
                         {(()=>{ const gated=selected.product.startsWith("itin")&&selected.eligibility!=="approved";
-                          return gated ? <div className="step-hint" style={{marginBottom:8}}>Оплату можно отметить только после одобрения основания ITIN. Сейчас: {selected.eligibility==="rejected"?"отклонено":"на проверке"}.</div> : null; })()}
+                          return gated ? <div className="step-hint" style={{marginBottom:8}}>{t("Оплату можно отметить только после одобрения основания ITIN. Сейчас: ")}{selected.eligibility==="rejected"?t("отклонено"):t("на проверке")}.</div> : null; })()}
                         {due&&(
                           <>
-                            <div className="step-hint" style={{marginBottom:8}}>
-                              К получению: <b>{usd(due.total_cents)}</b> ({dueBreakdown(due)})
+                            <div className="step-hint" style={{marginBottom:8}}>{t("К получению: ")}<b>{usd(due.total_cents)}</b> ({dueBreakdown(due)})
                             </div>
                             <label style={{display:"block",marginBottom:8}}>
-                              <span className="step-hint">Получено, $</span>
-                              <input className="partner-select" type="number" min={0} step="0.01" aria-label="Получено, $"
+                              <span className="step-hint">{t("Получено, $")}</span>
+                              <input className="partner-select" type="number" min={0} step="0.01" aria-label={t("Получено, $")}
                                 value={paidInput} onChange={e=>setPaidInput(e.target.value)}/>
                             </label>
                           </>
@@ -1246,27 +1233,25 @@ function App() {
                         <button className="btn btn-primary btn-full"
                           disabled={busy||(selected.product.startsWith("itin")&&selected.eligibility!=="approved")||(!!due&&!(Number(paidInput)>0))}
                           onClick={()=>{
-                            const note=prompt("Комментарий к оплате (необязательно)")||"";
+                            const note=prompt(t("Комментарий к оплате (необязательно)"))||"";
                             const cents = due ? Math.round(Number(paidInput)*100) : null;
                             setConfirm({
-                              title: cents!==null ? `Отметить оплату ${usd(cents)}?` : "Отметить оплату вручную?",
-                              body:"Убедитесь, что перевод получен. Это действие нельзя отменить.",
-                              confirmLabel:"Отметить оплату",
+                              title: cents!==null ? t("Отметить оплату {0}?", { 0: usd(cents) }) : t("Отметить оплату вручную?"),
+                              body:t("Убедитесь, что перевод получен. Это действие нельзя отменить."),
+                              confirmLabel:t("Отметить оплату"),
                               // С миграцией 020 — всегда форма с суммой; без неё (старая база) — прежний вызов.
                               onConfirm:()=>rpc("mark_order_paid_manually",
                                 cents!==null ? {p_order:selected.id,p_note:note,p_amount_cents:cents} : {p_order:selected.id,p_note:note},
-                                "Оплата отмечена")
+                                t("Оплата отмечена"))
                             });
                           }}>
-                          <CheckCircle2 size={15}/> Отметить оплату
-                        </button>
+                          <CheckCircle2 size={15}/>{t(" Отметить оплату")}</button>
                       </div>
                     )}
                     {selected.payment_status==="paid"&&selected.payment_marked_manually&&(
                       <div className="action-section">
                         <div className="assigned-chip" style={{background:"#f0fdf4",color:"#15803d"}}>
-                          <Check size={13}/> Оплата отмечена вручную
-                          {selected.payment_note&&<span style={{color:"#667085",marginLeft:4}}>· {selected.payment_note}</span>}
+                          <Check size={13}/>{t(" Оплата отмечена вручную")}{selected.payment_note&&<span style={{color:"#667085",marginLeft:4}}>· {selected.payment_note}</span>}
                         </div>
                       </div>
                     )}
@@ -1276,10 +1261,10 @@ function App() {
                     {/* Назначение партнёра (admin) */}
                     {role==="admin"&&(
                       <div className="action-section">
-                        <div className="action-label">Назначить CAA/CPA</div>
+                        <div className="action-label">{t("Назначить CAA/CPA")}</div>
                         <select className="partner-select" value={selectedPartner}
                           onChange={e=>setSelectedPartner(e.target.value)}>
-                          <option value="">— выберите специалиста —</option>
+                          <option value="">{t("— выберите специалиста —")}</option>
                           {partners.filter(p=>p.qualification!=="SPECIALIST").filter(p=>selected.product==="itin_return"?p.qualification==="CAA/CPA":selected.product==="itin_standard"||selected.product.startsWith("bundle")?p.qualification==="CAA"||p.qualification==="CAA/CPA":true).map(p=>(
                             <option key={p.id} value={p.id}>{p.display_name} · {p.qualification}</option>
                           ))}
@@ -1287,13 +1272,12 @@ function App() {
                         <button className="btn btn-outline btn-full" style={{marginTop:8}}
                           disabled={busy||!selectedPartner}
                           onClick={()=>setConfirm({
-                            title:"Назначить партнёра?",
-                            body:`Специалист получит доступ к этому заказу и документам клиента.`,
-                            confirmLabel:"Назначить",
-                            onConfirm:()=>{ rpc("assign_partner",{p_order:selected.id,p_partner:selectedPartner},"Партнёр назначен"); setSelectedPartner(""); }
+                            title:t("Назначить партнёра?"),
+                            body:t("Специалист получит доступ к этому заказу и документам клиента."),
+                            confirmLabel:t("Назначить"),
+                            onConfirm:()=>{ rpc("assign_partner",{p_order:selected.id,p_partner:selectedPartner},t("Партнёр назначен")); setSelectedPartner(""); }
                           })}>
-                          <Send size={14}/> Назначить
-                        </button>
+                          <Send size={14}/>{t(" Назначить")}</button>
                       </div>
                     )}
 
@@ -1301,41 +1285,49 @@ function App() {
                   </div>
                 </div>
 
+                {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&selected.eligibility==="approved"&&(
+                  <ItinW7 app={itinApp} role={role as "admin"|"partner"} busy={busy}
+                    onReturn={()=>{
+                      const note=prompt(t("Что исправить в анкете? Клиент увидит этот комментарий."));
+                      if(note?.trim()) setConfirm({
+                        title:t("Вернуть анкету клиенту?"),
+                        body:t("Клиент увидит комментарий: «{0}». Этап после «Документы» закроется, пока клиент не отправит анкету снова.", { 0: note.trim() }),
+                        confirmLabel:t("Вернуть"),danger:true,
+                        onConfirm:()=>rpc("return_itin_application",{p_order:selected.id,p_note:note.trim()},t("Анкета возвращена клиенту"))
+                      });
+                    }}/>
+                )}
                 {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&(
                   <div className="card" style={{marginBottom:18}}>
-                    <h2>Номер ITIN</h2>
+                    <h2>{t("Номер ITIN")}</h2>
                     {itinRecord&&<div className="alert info" style={{marginBottom:10}}>
-                      {itinRecord.approved?"Одобрен администратором — клиент видит номер: ":"Внесён партнёром — клиент пока не видит номер: "}
+                      {itinRecord.approved?t("Одобрен администратором — клиент видит номер: "):t("Внесён партнёром — клиент пока не видит номер: ")}
                       <b>{itinRecord.itin}</b>
-                      {itinRecord.assigned_on&&<span> · дата присвоения {itinRecord.assigned_on}</span>}
+                      {itinRecord.assigned_on&&<span>{t(" · дата присвоения ")}{itinRecord.assigned_on}</span>}
                     </div>}
                     {(role==="admin"||(role==="partner"&&["sent_irs","itin_received"].includes(selected.product.startsWith("bundle")?selected.itin_status||"":viewOrder(selected).status)))&&(
                       <div className="grid-2">
-                        <input className="partner-select" aria-label="Номер ITIN в формате 9XX-XX-XXXX" placeholder="9XX-XX-XXXX" value={itinEntry} onChange={e=>setItinEntry(e.target.value)} />
-                        <input className="partner-select" aria-label="Дата присвоения ITIN" type="date" value={itinAssignedOn} onChange={e=>setItinAssignedOn(e.target.value)} />
+                        <input className="partner-select" aria-label={t("Номер ITIN в формате 9XX-XX-XXXX")} placeholder="9XX-XX-XXXX" value={itinEntry} onChange={e=>setItinEntry(e.target.value)} />
+                        <input className="partner-select" aria-label={t("Дата присвоения ITIN")} type="date" value={itinAssignedOn} onChange={e=>setItinAssignedOn(e.target.value)} />
                         <button className="btn btn-primary" disabled={busy||!/^9[0-9]{2}-[0-9]{2}-[0-9]{4}$/.test(itinEntry)}
-                          onClick={()=>rpc("record_itin",{p_order:selected.id,p_itin:itinEntry,p_assigned_on:itinAssignedOn||null},role==="admin"?"✓ Сохранено и одобрено":"✓ Сохранено")}>
-                          Сохранить ITIN
-                        </button>
+                          onClick={()=>rpc("record_itin",{p_order:selected.id,p_itin:itinEntry,p_assigned_on:itinAssignedOn||null},role==="admin"?t("✓ Сохранено и одобрено"):t("✓ Сохранено"))}>{t("Сохранить ITIN")}</button>
                       </div>
                     )}
                     {(role==="admin"||(role==="partner"&&["sent_irs","itin_received"].includes(selected.product.startsWith("bundle")?selected.itin_status||"":viewOrder(selected).status)))&&
-                      <p className="step-hint">Формат номера: 9XX-XX-XXXX. Кнопка станет доступной после ввода полного номера.</p>}
+                      <p className="step-hint">{t("Формат номера: 9XX-XX-XXXX. Кнопка станет доступной после ввода полного номера.")}</p>}
                     {role==="admin"&&itinRecord&&!itinRecord.approved&&(
                       <button className="btn btn-success" disabled={busy}
-                        onClick={()=>rpc("approve_itin",{p_order:selected.id},"Номер ITIN одобрен; теперь он виден клиенту")}>
-                        Одобрить ITIN для клиента
-                      </button>
+                        onClick={()=>rpc("approve_itin",{p_order:selected.id},t("Номер ITIN одобрен; теперь он виден клиенту"))}>{t("Одобрить ITIN для клиента")}</button>
                     )}
                     <div className="action-section" style={{marginTop:14}}>
-                      <div className="action-label">Финальные документы ITIN</div>
-                      <div className="step-hint">{itinRecord?"✓":"○"} Номер ITIN внесён</div>
-                      <div className="step-hint">{partnerDocs.some(d=>d.doc_type==="itin_letter"&&(role==="admin"?d.visibility==="published":d.visibility!=="partner_only"))?"✓":"○"} Письмо IRS (CP565) {role==="admin"?"передано клиенту":"отправлено"}</div>
+                      <div className="action-label">{t("Финальные документы ITIN")}</div>
+                      <div className="step-hint">{itinRecord?"✓":"○"}{t(" Номер ITIN внесён")}</div>
+                      <div className="step-hint">{partnerDocs.some(d=>d.doc_type==="itin_letter"&&(role==="admin"?d.visibility==="published":d.visibility!=="partner_only"))?"✓":"○"}{t(" Письмо IRS (CP565) ")}{role==="admin"?t("передано клиенту"):t("отправлено")}</div>
                     </div>
                     {irsEvents.length>0&&<div style={{marginTop:12}}>
-                      <div className="action-label">История IRS, попытка {selected.itin_attempt||1}</div>
+                      <div className="action-label">{t("История IRS, попытка ")}{selected.itin_attempt||1}</div>
                       {irsEvents.map(event=><div className="history-row" key={event.id}>
-                        <span>{event.kind==="request"?"Запрос IRS":"Отказ IRS"} · {event.note} · попытка {event.attempt}</span>
+                        <span>{event.kind==="request"?t("Запрос IRS"):t("Отказ IRS")} · {event.note}{t(" · попытка ")}{event.attempt}</span>
                         <time>{fmt(event.created_at)}</time>
                       </div>)}
                     </div>}
@@ -1343,23 +1335,19 @@ function App() {
                       <div className="doc-actions" style={{marginTop:12}}>
                         <button className="btn btn-outline btn-sm" disabled={busy||((selected.product.startsWith("bundle")?selected.itin_status:selected.status)!=="sent_irs")}
                           onClick={()=>{
-                            const note=prompt("Что запросил IRS?");
-                            if(note?.trim()) rpc("record_irs_event",{p_order:selected.id,p_stream:selected.product.startsWith("bundle")?"itin":"main",p_kind:"request",p_note:note.trim(),p_op:crypto.randomUUID()},"Запрос IRS записан");
-                          }}>
-                          Запрос IRS
-                        </button>
+                            const note=prompt(t("Что запросил IRS?"));
+                            if(note?.trim()) rpc("record_irs_event",{p_order:selected.id,p_stream:selected.product.startsWith("bundle")?"itin":"main",p_kind:"request",p_note:note.trim(),p_op:crypto.randomUUID()},t("Запрос IRS записан"));
+                          }}>{t("Запрос IRS")}</button>
                         <button className="btn btn-danger btn-sm" disabled={busy||((selected.product.startsWith("bundle")?selected.itin_status:selected.status)!=="sent_irs")}
                           onClick={()=>{
-                            const note=prompt("Причина отказа IRS?");
+                            const note=prompt(t("Причина отказа IRS?"));
                             if(note?.trim()) setConfirm({
-                               title:"Отказ IRS — повторная подача бесплатно?",
-                               body:"Поток ITIN вернётся к этапу «Документы», попытка +1. Оплата не требуется.",
-                               confirmLabel:"Подтвердить отказ", danger:true,
-                               onConfirm:()=>rpc("record_irs_event",{p_order:selected.id,p_stream:selected.product.startsWith("bundle")?"itin":"main",p_kind:"rejection",p_note:note.trim(),p_op:crypto.randomUUID()},"Отказ IRS записан; готовим бесплатную повторную подачу")
+                               title:t("Отказ IRS — повторная подача бесплатно?"),
+                               body:t("Поток ITIN вернётся к этапу «Документы», попытка +1. Оплата не требуется."),
+                               confirmLabel:t("Подтвердить отказ"), danger:true,
+                               onConfirm:()=>rpc("record_irs_event",{p_order:selected.id,p_stream:selected.product.startsWith("bundle")?"itin":"main",p_kind:"rejection",p_note:note.trim(),p_op:crypto.randomUUID()},t("Отказ IRS записан; готовим бесплатную повторную подачу"))
                              });
-                          }}>
-                          Отказ IRS · повторная подача
-                        </button>
+                          }}>{t("Отказ IRS · повторная подача")}</button>
                       </div>
                     )}
                   </div>
@@ -1369,53 +1357,51 @@ function App() {
                 {!selected.product.startsWith("itin")&&(()=>{
                   const isAdmin = role==="admin";
                   const pub = new Set(partnerDocs.filter(d=>isAdmin?d.visibility==="published":d.visibility!=="partner_only").map(d=>d.doc_type));
-                  const verb = isAdmin?"передан клиенту":"отправлен";
+                  const verb = isAdmin?t("передан клиенту"):t("отправлен");
                   const checks = [
-                    { ok: isAdmin?(!!company?.ein&&!!company?.approved):!!company?.ein, label: isAdmin?"EIN одобрен (видит клиент)":"EIN внесён" },
+                    { ok: isAdmin?(!!company?.ein&&!!company?.approved):!!company?.ein, label: isAdmin?t("EIN одобрен (видит клиент)"):t("EIN внесён") },
                     { ok: pub.has("articles"), label: `Articles of Organization ${verb}` },
-                    { ok: pub.has("ein_letter"), label: `Письмо EIN ${verb}` },
+                    { ok: pub.has("ein_letter"), label: t("Письмо EIN {0}", { 0: verb }) },
                     { ok: pub.has("operating_agreement"), label: `Operating Agreement ${verb}` },
                   ];
                   const showCompany = ["registered","ein_requested","ein_received"].includes(selected.status);
                   return (
                     <div className="grid-2">
                       <div className="card">
-                        <h2>Данные компании</h2>
+                        <h2>{t("Данные компании")}</h2>
                         {!showCompany ? (
-                          <p style={{color:"#94a3b8",fontSize:13}}>Заполняется после регистрации в штате (этап «Компания зарегистрирована»).</p>
+                          <p style={{color:"#94a3b8",fontSize:13}}>{t("Заполняется после регистрации в штате (этап «Компания зарегистрирована»).")}</p>
                         ) : (
                           <>
-                            <label className="eyebrow" style={{display:"block",marginBottom:4}}>Название</label>
+                            <label className="eyebrow" style={{display:"block",marginBottom:4}}>{t("Название")}</label>
                             <input className="partner-select" value={coName} onChange={e=>setCoName(e.target.value)} style={{marginBottom:10}}/>
                             <label className="eyebrow" style={{display:"block",marginBottom:4}}>EIN</label>
                             <input className="partner-select" placeholder="12-3456789" value={coEin} onChange={e=>setCoEin(e.target.value)} style={{marginBottom:10}}/>
-                            <label className="eyebrow" style={{display:"block",marginBottom:4}}>Дата регистрации в штате</label>
+                            <label className="eyebrow" style={{display:"block",marginBottom:4}}>{t("Дата регистрации в штате")}</label>
                             <input className="partner-select" type="date" value={coDate} onChange={e=>setCoDate(e.target.value)} style={{marginBottom:12}}/>
                             <button className="btn btn-primary btn-full" disabled={busy||!coName.trim()||!coDate}
-                              onClick={()=>rpc("record_company",{p_order:selected.id,p_name:coName,p_ein:coEin||null,p_registered_on:coDate},role==="admin"?"Данные компании сохранены и видны клиенту":"Данные компании сохранены")}>
-                              <Check size={15}/> Сохранить
-                            </button>
+                              onClick={()=>rpc("record_company",{p_order:selected.id,p_name:coName,p_ein:coEin||null,p_registered_on:coDate},role==="admin"?t("Данные компании сохранены и видны клиенту"):t("Данные компании сохранены"))}>
+                              <Check size={15}/>{t(" Сохранить")}</button>
                             {company&&!company.approved&&role==="admin"&&(
                               <div className="alert warn" style={{marginTop:10,marginBottom:0}}>
-                                <Clock size={15}/> Данные внесены партнёром и ждут вашего одобрения. Клиент их пока не видит.
-                              </div>
+                                <Clock size={15}/>{t(" Данные внесены партнёром и ждут вашего одобрения. Клиент их пока не видит.")}</div>
                             )}
-                            {company&&role==="partner"&&<p style={{fontSize:12,color:"#15803d",marginTop:8}}>✓ Сохранено</p>}
+                            {company&&role==="partner"&&<p style={{fontSize:12,color:"#15803d",marginTop:8}}>{t("✓ Сохранено")}</p>}
                             {company&&!company.approved&&role==="admin"&&(
                               <button className="btn btn-success btn-full" style={{marginTop:8}} disabled={busy}
                                 onClick={()=>setConfirm({
-                                  title:"Одобрить данные компании?",
-                                  body:`Клиент увидит: ${company.name}, EIN ${company.ein||"—"}, и календарь сроков.`,
-                                  confirmLabel:"Одобрить",
-                                  onConfirm:()=>rpc("approve_company",{p_order:selected.id},"Данные компании одобрены")
-                                })}><CheckCircle2 size={15}/> Одобрить данные</button>
+                                  title:t("Одобрить данные компании?"),
+                                  body:t("Клиент увидит: {0}, EIN {1}, и календарь сроков.", { 0: company.name, 1: company.ein||"—" }),
+                                  confirmLabel:t("Одобрить"),
+                                  onConfirm:()=>rpc("approve_company",{p_order:selected.id},t("Данные компании одобрены"))
+                                })}><CheckCircle2 size={15}/>{t(" Одобрить данные")}</button>
                             )}
-                            {company?.approved&&role==="admin"&&<p style={{fontSize:12,color:"#15803d",marginTop:8}}>✓ Одобрено. Клиент видит карточку компании и календарь сроков.</p>}
+                            {company?.approved&&role==="admin"&&<p style={{fontSize:12,color:"#15803d",marginTop:8}}>{t("✓ Одобрено. Клиент видит карточку компании и календарь сроков.")}</p>}
                           </>
                         )}
                       </div>
                       <div className="card">
-                        <h2>{isAdmin?"Выдача клиенту":"Финальные документы"}</h2>
+                        <h2>{isAdmin?t("Выдача клиенту"):t("Финальные документы")}</h2>
                         {checks.map(c=>(
                           <div key={c.label} className="history-row">
                             <span style={{color:c.ok?"#15803d":"#667085"}}>
@@ -1424,7 +1410,7 @@ function App() {
                             </span>
                           </div>
                         ))}
-                        <p style={{fontSize:12,color:"#667085",marginTop:10}}>Этап «EIN получен» откроется, когда все пункты выполнены.</p>
+                        <p style={{fontSize:12,color:"#667085",marginTop:10}}>{t("Этап «EIN получен» откроется, когда все пункты выполнены.")}</p>
                       </div>
                     </div>
                   );
@@ -1432,67 +1418,54 @@ function App() {
 
                 {/* Client docs */}
                 <div className="card" style={{marginBottom:18}}>
-                  <h2>Документы клиента</h2>
-                  {clientDocs.length===0&&<p style={{color:"#94a3b8",fontSize:13}}>Клиент ещё не загрузил документы</p>}
+                  <h2>{t("Документы клиента")}</h2>
+                  {clientDocs.length===0&&<p style={{color:"#94a3b8",fontSize:13}}>{t("Клиент ещё не загрузил документы")}</p>}
                   {clientDocs.map(d=>(
                     <div className="doc-row" key={d.id}>
                       <FileText size={18} color="#94a3b8"/>
                       <div style={{flex:1}}>
                         <div className="doc-name">{d.name}</div>
                         <div className="doc-meta">{fmtBytes(d.size_bytes)} · {fmt(d.created_at)}</div>
-                        {d.review_comment&&<div className="doc-meta" style={{color:"#a32828"}}>Замечание: {d.review_comment}</div>}
-                        {role==="partner"&&documentReviewProposals.find(p=>p.document_id===d.id)&&<div className="doc-meta" style={{color:"#a15c00",fontWeight:600}}>Ваше предложение: {documentReviewProposals.find(p=>p.document_id===d.id)?.status==="accepted"?"принять":"отклонить"}{documentReviewProposals.find(p=>p.document_id===d.id)?.comment?` · ${documentReviewProposals.find(p=>p.document_id===d.id)?.comment}`:""}</div>}
+                        {d.review_comment&&<div className="doc-meta" style={{color:"#a32828"}}>{t("Замечание: ")}{d.review_comment}</div>}
+                        {role==="partner"&&documentReviewProposals.find(p=>p.document_id===d.id)&&<div className="doc-meta" style={{color:"#a15c00",fontWeight:600}}>{t("Ваше предложение: ")}{documentReviewProposals.find(p=>p.document_id===d.id)?.status==="accepted"?t("принять"):t("отклонить")}{documentReviewProposals.find(p=>p.document_id===d.id)?.comment?` · ${documentReviewProposals.find(p=>p.document_id===d.id)?.comment}`:""}</div>}
                       </div>
                       <span className={`badge ${d.review_status==="accepted"?"doc-published":d.review_status==="rejected"?"pending-el":"unpaid"}`}>
-                        {d.review_status==="accepted"?"Принят":d.review_status==="rejected"?"Отклонён":"На проверке"}
+                        {d.review_status==="accepted"?t("Принят"):d.review_status==="rejected"?t("Отклонён"):t("На проверке")}
                       </span>
                       <div className="doc-actions">
-                        <button className="btn btn-outline btn-sm" onClick={()=>openDoc(d.path)}>Открыть</button>
+                        <button className="btn btn-outline btn-sm" onClick={()=>openDoc(d.path)}>{t("Открыть")}</button>
                         {role==="partner"&&!d.superseded_at&&!documentReviewProposals.some(p=>p.document_id===d.id)&&d.review_status!=="accepted"&&d.review_status!=="rejected"&&(
                           <div className="doc-actions">
                             <button className="btn btn-success btn-sm" disabled={busy}
-                              onClick={()=>rpc("propose_document_review",{p_document:d.id,p_status:"accepted",p_comment:null,p_op:crypto.randomUUID()},"Предложение принять отправлено администратору")}>
-                              Предложить: принять
-                            </button>
+                              onClick={()=>rpc("propose_document_review",{p_document:d.id,p_status:"accepted",p_comment:null,p_op:crypto.randomUUID()},t("Предложение принять отправлено администратору"))}>{t("Предложить: принять")}</button>
                             <button className="btn btn-danger btn-sm" disabled={busy}
                               onClick={()=>{
-                                const reason=prompt("Причина отклонения документа");
-                                if(reason?.trim()) rpc("propose_document_review",{p_document:d.id,p_status:"rejected",p_comment:reason.trim(),p_op:crypto.randomUUID()},"Предложение отклонить отправлено администратору");
-                              }}>
-                              Предложить: отклонить
-                            </button>
+                                const reason=prompt(t("Причина отклонения документа"));
+                                if(reason?.trim()) rpc("propose_document_review",{p_document:d.id,p_status:"rejected",p_comment:reason.trim(),p_op:crypto.randomUUID()},t("Предложение отклонить отправлено администратору"));
+                              }}>{t("Предложить: отклонить")}</button>
                           </div>
                         )}
                         {role==="admin"&&(()=>{
                           const proposal=documentReviewProposals.find(p=>p.document_id===d.id);
                           return (
                             <div>
-                              {proposal&&<div className="doc-meta" style={{color:"#a15c00",fontWeight:600,marginBottom:6}}>
-                                Партнёр предлагает {proposal.status==="accepted"?"принять":"отклонить"} документ
-                                {proposal.comment&&<span> · {proposal.comment}</span>}
+                              {proposal&&<div className="doc-meta" style={{color:"#a15c00",fontWeight:600,marginBottom:6}}>{t("Партнёр предлагает ")}{proposal.status==="accepted"?t("принять"):t("отклонить")}{t(" документ")}{proposal.comment&&<span> · {proposal.comment}</span>}
                               </div>}
                               <div className="doc-actions">
                                 {proposal&&<>
                                   <button className="btn btn-success btn-sm" disabled={busy}
-                                    onClick={()=>rpc("confirm_document_review",{p_document:d.id,p_op:crypto.randomUUID()},"Предложение подтверждено; клиент увидит решение")}>
-                                    <Check size={13}/> Подтвердить
-                                  </button>
+                                    onClick={()=>rpc("confirm_document_review",{p_document:d.id,p_op:crypto.randomUUID()},t("Предложение подтверждено; клиент увидит решение"))}>
+                                    <Check size={13}/>{t(" Подтвердить")}</button>
                                   <button className="btn btn-outline btn-sm" disabled={busy}
-                                    onClick={()=>rpc("return_document_review",{p_document:d.id},"Предложение возвращено партнёру")}>
-                                    Вернуть
-                                  </button>
+                                    onClick={()=>rpc("return_document_review",{p_document:d.id},t("Предложение возвращено партнёру"))}>{t("Вернуть")}</button>
                                 </>}
                                 {d.review_status!=="accepted"&&<button className="btn btn-success btn-sm" disabled={busy}
-                                  onClick={()=>rpc("review_document",{p_document:d.id,p_status:"accepted",p_comment:null},"Вы приняли документ; клиент увидит решение")}>
-                                  Решить самому: принять
-                                </button>}
+                                  onClick={()=>rpc("review_document",{p_document:d.id,p_status:"accepted",p_comment:null},t("Вы приняли документ; клиент увидит решение"))}>{t("Решить самому: принять")}</button>}
                                 {d.review_status!=="rejected"&&<button className="btn btn-danger btn-sm" disabled={busy}
                                   onClick={()=>{
-                                    const reason=prompt("Причина отклонения документа");
-                                    if(reason?.trim()) rpc("review_document",{p_document:d.id,p_status:"rejected",p_comment:reason.trim()},"Вы отклонили документ; клиент увидит решение");
-                                  }}>
-                                  Решить самому: отклонить
-                                </button>}
+                                    const reason=prompt(t("Причина отклонения документа"));
+                                    if(reason?.trim()) rpc("review_document",{p_document:d.id,p_status:"rejected",p_comment:reason.trim()},t("Вы отклонили документ; клиент увидит решение"));
+                                  }}>{t("Решить самому: отклонить")}</button>}
                               </div>
                             </div>
                           );
@@ -1504,55 +1477,51 @@ function App() {
 
                 {/* Partner docs */}
                 <div className="card" style={{marginBottom:18}}>
-                  <h2>Документы партнёра</h2>
-                  {partnerDocs.length===0&&<p style={{color:"#94a3b8",fontSize:13}}>Нет загруженных документов</p>}
+                  <h2>{t("Документы партнёра")}</h2>
+                  {partnerDocs.length===0&&<p style={{color:"#94a3b8",fontSize:13}}>{t("Нет загруженных документов")}</p>}
                   {partnerDocs.map(d=>(
                     <div className="doc-row" key={d.id}>
                       <FileText size={18} color="#4762c9"/>
                       <div style={{flex:1}}>
                         <div className="doc-name">{d.name}</div>
                         <div className="doc-meta"><b>{DOC_TYPES[d.doc_type||"other"]}</b> · {fmtBytes(d.size_bytes)} · {fmt(d.created_at)}</div>
-                        {d.note&&<div className="doc-meta" style={{color:"#a32828"}}>Замечание: {d.note}</div>}
+                        {d.note&&<div className="doc-meta" style={{color:"#a32828"}}>{t("Замечание: ")}{d.note}</div>}
                       </div>
                       <span className={`badge ${d.visibility==="published"?"doc-published":d.visibility==="admin_review"?"doc-review":"status"}`}>
-                        {d.visibility==="published"?"✓ Передан клиенту":d.visibility==="admin_review"?"На проверке у admin":"Черновик"}
+                        {d.visibility==="published"?t("✓ Передан клиенту"):d.visibility==="admin_review"?t("На проверке у admin"):t("Черновик")}
                       </span>
                       <div className="doc-actions">
-                        <button className="btn btn-outline btn-sm" onClick={()=>openDoc(d.path)}>Открыть</button>
+                        <button className="btn btn-outline btn-sm" onClick={()=>openDoc(d.path)}>{t("Открыть")}</button>
                         {role==="partner"&&d.visibility==="partner_only"&&(
                           <button className="btn btn-primary btn-sm" disabled={busy}
                             onClick={()=>setConfirm({
-                              title:"Отправить на проверку?",
-                              body:"Документ будет отправлен администратору на проверку перед передачей клиенту.",
-                              confirmLabel:"Отправить",
-                              onConfirm:()=>rpc("submit_partner_doc_for_review",{p_doc:d.id},"Документ отправлен на проверку")
+                              title:t("Отправить на проверку?"),
+                              body:t("Документ будет отправлен администратору на проверку перед передачей клиенту."),
+                              confirmLabel:t("Отправить"),
+                              onConfirm:()=>rpc("submit_partner_doc_for_review",{p_doc:d.id},t("Документ отправлен на проверку"))
                             })}>
-                            <Send size={12}/> Отправить
-                          </button>
+                            <Send size={12}/>{t(" Отправить")}</button>
                         )}
                         {role==="admin"&&d.visibility==="admin_review"&&(
                           <>
                             <button className="btn btn-success btn-sm" disabled={busy}
                               onClick={()=>setConfirm({
-                                title:"Передать документ клиенту?",
-                                body:"Клиент сразу увидит этот документ в своём кабинете.",
-                                confirmLabel:"Передать клиенту",
-                                onConfirm:()=>rpc("publish_partner_doc",{p_doc:d.id},"Документ передан клиенту")
+                                title:t("Передать документ клиенту?"),
+                                body:t("Клиент сразу увидит этот документ в своём кабинете."),
+                                confirmLabel:t("Передать клиенту"),
+                                onConfirm:()=>rpc("publish_partner_doc",{p_doc:d.id},t("Документ передан клиенту"))
                               })}>
-                              <ChevronRight size={13}/> Клиенту
-                            </button>
+                              <ChevronRight size={13}/>{t(" Клиенту")}</button>
                             <button className="btn btn-danger btn-sm" disabled={busy}
                               onClick={()=>{
-                                const note=prompt("Замечание для партнёра")||"";
+                                const note=prompt(t("Замечание для партнёра"))||"";
                                 setConfirm({
-                                  title:"Вернуть документ партнёру?",
-                                  body:note?`Партнёр увидит замечание: «${note}»`:"Документ вернётся в черновики партнёра.",
-                                  confirmLabel:"Вернуть",danger:true,
-                                  onConfirm:()=>rpc("return_partner_doc",{p_doc:d.id,p_note:note},"Документ возвращён партнёру")
+                                  title:t("Вернуть документ партнёру?"),
+                                  body:note?t("Партнёр увидит замечание: «{0}»", { 0: note }):t("Документ вернётся в черновики партнёра."),
+                                  confirmLabel:t("Вернуть"),danger:true,
+                                  onConfirm:()=>rpc("return_partner_doc",{p_doc:d.id,p_note:note},t("Документ возвращён партнёру"))
                                 });
-                              }}>
-                              ↩ Вернуть
-                            </button>
+                              }}>{t("↩ Вернуть")}</button>
                           </>
                         )}
                       </div>
@@ -1561,15 +1530,15 @@ function App() {
 
                   {role==="partner"&&(
                     <>
-                      <div className="section-title" style={{marginTop:16}}>Загрузить документ</div>
+                      <div className="section-title" style={{marginTop:16}}>{t("Загрузить документ")}</div>
                       <select className="partner-select" value={docType} onChange={e=>setDocType(e.target.value)} style={{marginBottom:8}}>
                         {Object.entries(DOC_TYPES).map(([v,l])=><option key={v} value={v}>{l}</option>)}
                       </select>
-                      <textarea className="note-area" placeholder="Комментарий к документу (необязательно)"
+                      <textarea className="note-area" placeholder={t("Комментарий к документу (необязательно)")}
                         value={partnerNote} onChange={e=>setPartnerNote(e.target.value)}/>
                       <label className="upload-zone" style={{marginTop:10}}>
                         <Upload size={22} color="#4762c9"/>
-                        <p>PDF, JPG или PNG · до 10 МБ</p>
+                        <p>{t("PDF, JPG или PNG · до 10 МБ")}</p>
                         <input ref={fileRef} type="file" accept="application/pdf,image/jpeg,image/png"
                           disabled={busy}
                           onChange={async e=>{ const f=e.target.files?.[0]; if(f) await uploadPartnerDoc(f); e.target.value=""; }}/>
@@ -1583,24 +1552,24 @@ function App() {
                 {/* Audit (admin) */}
                 {role==="admin"&&(
                   <div className="card" style={{marginBottom:18}}>
-                    <h2>Журнал действий</h2>
-                    {audit.length===0&&<p style={{color:"#94a3b8",fontSize:13}}>Записей нет</p>}
+                    <h2>{t("Журнал действий")}</h2>
+                    {audit.length===0&&<p style={{color:"#94a3b8",fontSize:13}}>{t("Записей нет")}</p>}
                     {audit.map(a=>{
                       const nv=(a.new_value||{}) as Record<string,unknown>; const ov=(a.old_value||{}) as Record<string,unknown>;
-                      const what = a.entity==="orders" ? (nv.product!==ov.product&&ov.product?`продукт: ${PROD[String(ov.product)]||ov.product} → ${PROD[String(nv.product)]||nv.product}`
-                          : nv.status!==ov.status?`статус: ${STATUS[String(ov.status)]||ov.status||"—"} → ${STATUS[String(nv.status)]||nv.status}`
-                          : nv.partner_id!==ov.partner_id?"смена партнёра" : nv.payment_status!==ov.payment_status?`оплата: ${nv.payment_status}`
-                          : nv.cancelled_at&&!ov.cancelled_at?"отмена" : nv.eligibility!==ov.eligibility?`ITIN: ${nv.eligibility}` : nv.closed_at&&!ov.closed_at?"закрытие":"изменение заказа")
-                        : a.entity==="status_proposals" ? (a.action==="delete"?"прогресс партнёра сброшен/подтверждён":`партнёр: ${STATUS[String(nv.proposed_status)]||nv.proposed_status}`)
-                        : a.entity==="partner_documents" ? `документ партнёра: ${nv.visibility}`
-                        : a.entity==="documents" ? (nv.superseded_at&&!ov.superseded_at?"документ клиента заменён":`документ клиента: ${nv.review_status}`)
-                        : a.entity==="companies" ? (nv.approved&&!ov.approved?"данные компании одобрены":"данные компании")
-                        : a.entity==="order_refunds" ? `возврат $${(Number(nv.amount_cents)/100).toFixed(2)}`
-                        : a.entity==="order_milestones" ? "факт подачи"
-                        : a.entity==="specialist_proposals" ? (a.action==="delete"?"предложение специалиста обработано":`специалист предлагает: ${nv.decision==="approve"?`одобрить → ${PROD[String(nv.recommended_product)]||nv.recommended_product}`:"отказать"}`) : `${a.entity}: ${a.action}`;
+                      const what = a.entity==="orders" ? (nv.product!==ov.product&&ov.product?t("продукт: {0} → {1}", { 0: PROD[String(ov.product)]||ov.product, 1: PROD[String(nv.product)]||nv.product })
+                          : nv.status!==ov.status?t("статус: {0} → {1}", { 0: STATUS[String(ov.status)]||ov.status||"—", 1: STATUS[String(nv.status)]||nv.status })
+                          : nv.partner_id!==ov.partner_id?t("смена партнёра") : nv.payment_status!==ov.payment_status?t("оплата: {0}", { 0: nv.payment_status })
+                          : nv.cancelled_at&&!ov.cancelled_at?t("отмена") : nv.eligibility!==ov.eligibility?`ITIN: ${nv.eligibility}` : nv.closed_at&&!ov.closed_at?t("закрытие"):t("изменение заказа"))
+                        : a.entity==="status_proposals" ? (a.action==="delete"?t("прогресс партнёра сброшен/подтверждён"):t("партнёр: {0}", { 0: STATUS[String(nv.proposed_status)]||nv.proposed_status }))
+                        : a.entity==="partner_documents" ? t("документ партнёра: {0}", { 0: nv.visibility })
+                        : a.entity==="documents" ? (nv.superseded_at&&!ov.superseded_at?t("документ клиента заменён"):t("документ клиента: {0}", { 0: nv.review_status }))
+                        : a.entity==="companies" ? (nv.approved&&!ov.approved?t("данные компании одобрены"):t("данные компании"))
+                        : a.entity==="order_refunds" ? t("возврат ${0}", { 0: (Number(nv.amount_cents)/100).toFixed(2) })
+                        : a.entity==="order_milestones" ? t("факт подачи")
+                        : a.entity==="specialist_proposals" ? (a.action==="delete"?t("предложение специалиста обработано"):t("специалист предлагает: {0}", { 0: nv.decision==="approve"?t("одобрить → {0}", { 0: PROD[String(nv.recommended_product)]||nv.recommended_product }):t("отказать") })) : `${a.entity}: ${a.action}`;
                       return (
                         <div className="history-row" key={a.id}>
-                          <span>{what}{a.reason?` · «${a.reason}»`:""} <span style={{color:"#94a3b8"}}>· {a.actor_role||"система"}</span></span>
+                          <span>{what}{a.reason?` · «${a.reason}»`:""} <span style={{color:"#94a3b8"}}>· {a.actor_role||t("система")}</span></span>
                           <time>{fmt(a.at)}</time>
                         </div>
                       );
@@ -1610,10 +1579,10 @@ function App() {
 
                 {/* History */}
                 <div className="card">
-                  <h2>История</h2>
+                  <h2>{t("История")}</h2>
                   <div className="history-list">
                     {(selected.order_status_history||[]).length===0&&(
-                      <p style={{color:"#94a3b8",fontSize:13}}>История пуста</p>
+                      <p style={{color:"#94a3b8",fontSize:13}}>{t("История пуста")}</p>
                     )}
                     {(selected.order_status_history||[]).map((h,i)=>(
                       <div className="history-row" key={i}>
