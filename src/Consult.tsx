@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { t, tr, locale } from "./i18n";
 import { AlertCircle, Check, CheckCircle2, MessageCircle, Send, UserCheck, XCircle } from "lucide-react";
 
 // Консультация специалиста (docs/UI_SPEC_016_017.md в репозитории TaxPasso).
@@ -21,19 +22,19 @@ export const CONSULT_PRODUCTS: Record<string, string> = {
   itin_standard: "ITIN Standard",
   itin_return: "ITIN + 1040-NR",
 };
-const QUIZ_SSN: Record<string, string> = { no: "SSN нет", unsure: "Не уверен(а), есть ли право на SSN" };
-const QUIZ_BASIS: Record<string, string> = {
+const QUIZ_SSN: Record<string, string> = tr({ no: "SSN нет", unsure: "Не уверен(а), есть ли право на SSN" });
+const QUIZ_BASIS: Record<string, string> = tr({
   unknown: "«Не знаю», есть ли налоговая причина",
   none: "«Налоговой причины, похоже, нет»",
-};
+});
 
-export const CONSULT_ERRORS: Record<string, string> = {
+export const CONSULT_ERRORS: Record<string, string> = tr({
   "Not a consult order": "Этот заказ уже перешёл на другой этап. Обновите страницу",
   "Partner must be a Specialist": "Для консультации назначьте специалиста",
   "Recommended product must be itin_standard or itin_return": "Выберите ITIN Standard или ITIN + 1040-NR",
   "Invalid decision": "Выберите решение",
   "Invalid contact value": "Контакт клиента некорректен",
-};
+});
 
 function contactLink(method?: string, value?: string): string | null {
   if (!value) return null;
@@ -48,7 +49,7 @@ function contactLink(method?: string, value?: string): string | null {
 }
 
 function fmtDate(d?: string | null) {
-  return d ? new Date(d).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+  return d ? new Date(d).toLocaleString(locale(), { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
 }
 
 export function ConsultPanel({
@@ -87,15 +88,15 @@ export function ConsultPanel({
   }, [order.id, proposal?.proposed_at]);
 
   const reasonLen = reason.trim().length;
-  const formError = !decision ? "Выберите решение"
-    : decision === "approve" && !product ? "Выберите продукт"
-    : decision === "reject" && (reasonLen < 3 || reasonLen > 1000) ? "Причина: от 3 до 1000 символов"
-    : reason.trim().length > 1000 ? "Комментарий: до 1000 символов" : "";
+  const formError = !decision ? t("Выберите решение")
+    : decision === "approve" && !product ? t("Выберите продукт")
+    : decision === "reject" && (reasonLen < 3 || reasonLen > 1000) ? t("Причина: от 3 до 1000 символов")
+    : reason.trim().length > 1000 ? t("Комментарий: до 1000 символов") : "";
   const adminReasonLen = adminReason.trim().length;
-  const adminReasonError = adminReasonLen < 3 || adminReasonLen > 1000 ? "Причина: от 3 до 1000 символов" : "";
+  const adminReasonError = adminReasonLen < 3 || adminReasonLen > 1000 ? t("Причина: от 3 до 1000 символов") : "";
 
   // Шаги для обеих ролей: «Интервью» активно, пока нет решения администратора.
-  const steps = ["Заявка", "Интервью", "Решение Taxpasso"];
+  const steps = [t("Заявка"), t("Интервью"), t("Решение Taxpasso")];
   const current = draft ? 0 : rejected || closed ? 3 : 1;
   const submittedAt = order.order_status_history?.find(h => h.status === "consult_interview")?.created_at;
   const link = contactLink(a.contact_method, a.contact_value);
@@ -108,12 +109,12 @@ export function ConsultPanel({
       p_order: order.id, p_decision: decision,
       p_recommended_product: decision === "approve" ? product : null,
       p_reason: reason.trim() || null, p_op: op("propose"),
-    }, "Предложение отправлено администратору");
+    }, t("Предложение отправлено администратору"));
   }
 
   return (
     <>
-      <div className="tracker" aria-label="Этапы консультации">
+      <div className="tracker" aria-label={t("Этапы консультации")}>
         <div className="tracker-steps">
           {steps.map((s, i) => (
             <div key={s} className={`tracker-step ${i < current ? "done" : i === current ? "active" : ""}`}>
@@ -129,59 +130,58 @@ export function ConsultPanel({
 
       {rejected && (
         <div className="alert danger" role="status">
-          <XCircle size={16}/> Основание не подтверждено, заказ закрыт{order.eligibility_note ? `: ${order.eligibility_note}` : ""}
+          <XCircle size={16}/>{t(" Основание не подтверждено, заказ закрыт")}{order.eligibility_note ? `: ${order.eligibility_note}` : ""}
         </div>
       )}
-      {!rejected && order.cancelled_at && <div className="alert danger"><XCircle size={16}/> Заказ отменён</div>}
-      {draft && <div className="alert info"><AlertCircle size={16}/> Клиент ещё не отправил заявку</div>}
+      {!rejected && order.cancelled_at && <div className="alert danger"><XCircle size={16}/>{t(" Заказ отменён")}</div>}
+      {draft && <div className="alert info"><AlertCircle size={16}/>{t(" Клиент ещё не отправил заявку")}</div>}
 
       <div className="grid-2">
         <div className="card">
-          <h2>Консультация · контакт клиента</h2>
+          <h2>{t("Консультация · контакт клиента")}</h2>
           <dl>
-            <div><dt>Имя</dt><dd>{a.name || "—"}</dd></div>
-            <div><dt>Страна</dt><dd>{a.country || "—"}</dd></div>
-            <div><dt>Способ связи</dt><dd>{method}</dd></div>
-            <div><dt>Контакт</dt><dd>
+            <div><dt>{t("Имя")}</dt><dd>{a.name || "—"}</dd></div>
+            <div><dt>{t("Страна")}</dt><dd>{a.country || "—"}</dd></div>
+            <div><dt>{t("Способ связи")}</dt><dd>{method}</dd></div>
+            <div><dt>{t("Контакт")}</dt><dd>
               {a.contact_value || "—"}
-              {link && <> · <a href={link} target="_blank" rel="noopener noreferrer" style={{ color: "#304fc0" }}>написать в {method}</a></>}
+              {link && <> · <a href={link} target="_blank" rel="noopener noreferrer" style={{ color: "#304fc0" }}>{t("написать в ")}{method}</a></>}
             </dd></div>
-            <div><dt>Удобное время</dt><dd>{a.preferred_time || "—"}</dd></div>
-            <div><dt>Опросник: SSN</dt><dd>{QUIZ_SSN[a.quiz_ssn] || a.quiz_ssn || "—"}</dd></div>
-            <div><dt>Опросник: причина</dt><dd>{QUIZ_BASIS[a.quiz_basis] || a.quiz_basis || "—"}</dd></div>
+            <div><dt>{t("Удобное время")}</dt><dd>{a.preferred_time || "—"}</dd></div>
+            <div><dt>{t("Опросник: SSN")}</dt><dd>{QUIZ_SSN[a.quiz_ssn] || a.quiz_ssn || "—"}</dd></div>
+            <div><dt>{t("Опросник: причина")}</dt><dd>{QUIZ_BASIS[a.quiz_basis] || a.quiz_basis || "—"}</dd></div>
           </dl>
         </div>
 
         <div className="card">
-          <h2>Действия</h2>
+          <h2>{t("Действия")}</h2>
 
           {role === "admin" && (
             <div className="action-section">
-              <div className="action-label">СПЕЦИАЛИСТ</div>
+              <div className="action-label">{t("Специалист")}</div>
               {assigned
                 ? <div className="step-hint"><UserCheck size={14} style={{ verticalAlign: -2 }}/> {assigned.display_name} ({assigned.qualification})</div>
-                : <div className="alert warn" style={{ marginBottom: 10 }}><AlertCircle size={15}/> Специалист не назначен</div>}
+                : <div className="alert warn" style={{ marginBottom: 10 }}><AlertCircle size={15}/>{t(" Специалист не назначен")}</div>}
               {!closed && !draft && (
                 specialists.length === 0
-                  ? <p className="step-hint">Нет партнёров с квалификацией SPECIALIST</p>
+                  ? <p className="step-hint">{t("Нет партнёров с квалификацией SPECIALIST")}</p>
                   : <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <label style={{ flex: "1 1 200px" }}>
-                        <span className="sr-only">Специалист</span>
-                        <select className="partner-select" aria-label="Специалист" value={selectedSpecialist}
+                        <span className="sr-only">{t("Специалист")}</span>
+                        <select className="partner-select" aria-label={t("Специалист")} value={selectedSpecialist}
                           onChange={e => setSelectedSpecialist(e.target.value)}>
-                          <option value="">{assigned ? "Сменить специалиста…" : "Выберите специалиста…"}</option>
+                          <option value="">{assigned ? t("Сменить специалиста…") : t("Выберите специалиста…")}</option>
                           {specialists.filter(p => p.id !== order.partner_id).map(p => <option key={p.id} value={p.id}>{p.display_name}</option>)}
                         </select>
                       </label>
                       <button className="btn btn-primary btn-sm" disabled={busy || !selectedSpecialist}
                         onClick={() => askConfirm({
-                          title: assigned ? "Сменить специалиста?" : "Назначить специалиста?",
-                          body: assigned ? "Текущее предложение прежнего специалиста будет удалено." : "Специалист увидит контакт клиента и сможет предложить решение.",
-                          confirmLabel: "Назначить",
-                          onConfirm: () => { rpc("assign_partner", { p_order: order.id, p_partner: selectedSpecialist }, "Специалист назначен"); setSelectedSpecialist(""); },
+                          title: assigned ? t("Сменить специалиста?") : t("Назначить специалиста?"),
+                          body: assigned ? t("Текущее предложение прежнего специалиста будет удалено.") : t("Специалист увидит контакт клиента и сможет предложить решение."),
+                          confirmLabel: t("Назначить"),
+                          onConfirm: () => { rpc("assign_partner", { p_order: order.id, p_partner: selectedSpecialist }, t("Специалист назначен")); setSelectedSpecialist(""); },
                         })}>
-                        <Send size={14}/> Назначить
-                      </button>
+                        <Send size={14}/>{t(" Назначить")}</button>
                     </div>
               )}
             </div>
@@ -192,85 +192,78 @@ export function ConsultPanel({
             <div className={`alert ${proposal.decision === "approve" ? "info" : "warn"}`} style={{ marginBottom: 12 }}>
               <AlertCircle size={15}/>
               <span>
-                <b>{role === "admin" ? "Специалист предлагает: " : "Ваше предложение: "}</b>
+                <b>{role === "admin" ? t("Специалист предлагает: ") : t("Ваше предложение: ")}</b>
                 {proposal.decision === "approve"
-                  ? <>основание есть → {CONSULT_PRODUCTS[proposal.recommended_product || ""] || proposal.recommended_product}</>
-                  : <>основание не подтверждается</>}
+                  ? <>{t("основание есть → ")}{CONSULT_PRODUCTS[proposal.recommended_product || ""] || proposal.recommended_product}</>
+                  : <>{t("основание не подтверждается")}</>}
                 {proposal.reason && <> · «{proposal.reason}»</>}
-                <br/><small>{fmtDate(proposal.proposed_at)} · ожидает решения администратора</small>
+                <br/><small>{fmtDate(proposal.proposed_at)}{t(" · ожидает решения администратора")}</small>
               </span>
             </div>
           )}
 
           {role === "partner" && !closed && !draft && (!proposal || editing) && (
             <div className="action-section">
-              <div className="action-label">РЕШЕНИЕ СПЕЦИАЛИСТА</div>
+              <div className="action-label">{t("Решение специалиста")}</div>
               <fieldset style={{ border: 0, padding: 0, margin: 0 }} aria-invalid={touched && !decision}>
-                <legend className="sr-only">Решение</legend>
+                <legend className="sr-only">{t("Решение")}</legend>
                 <label className="consult-choice">
-                  <input type="radio" name={`decision-${order.id}`} checked={decision === "approve"} onChange={() => setDecision("approve")}/>
-                  Основание подтверждается
-                </label>
+                  <input type="radio" name={`decision-${order.id}`} checked={decision === "approve"} onChange={() => setDecision("approve")}/>{t("Основание подтверждается")}</label>
                 <label className="consult-choice">
-                  <input type="radio" name={`decision-${order.id}`} checked={decision === "reject"} onChange={() => setDecision("reject")}/>
-                  Основание не подтверждается
-                </label>
+                  <input type="radio" name={`decision-${order.id}`} checked={decision === "reject"} onChange={() => setDecision("reject")}/>{t("Основание не подтверждается")}</label>
               </fieldset>
               {decision === "approve" && (
                 <label style={{ display: "block", marginTop: 8 }}>
-                  <span className="step-hint">Подходящий продукт *</span>
-                  <select className="partner-select" aria-label="Подходящий продукт" value={product}
+                  <span className="step-hint">{t("Подходящий продукт *")}</span>
+                  <select className="partner-select" aria-label={t("Подходящий продукт")} value={product}
                     aria-invalid={touched && !product} onChange={e => setProduct(e.target.value)}>
-                    <option value="">Выберите…</option>
+                    <option value="">{t("Выберите…")}</option>
                     {Object.entries(CONSULT_PRODUCTS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                   </select>
                 </label>
               )}
               {decision && (
                 <label style={{ display: "block", marginTop: 8 }}>
-                  <span className="step-hint">{decision === "reject" ? "Причина для клиента * (3–1000 символов)" : "Комментарий для администратора (необязательно)"}</span>
-                  <textarea className="note-area" aria-label={decision === "reject" ? "Причина" : "Комментарий"} maxLength={1000}
+                  <span className="step-hint">{decision === "reject" ? t("Причина для клиента * (3–1000 символов)") : t("Комментарий для администратора (необязательно)")}</span>
+                  <textarea className="note-area" aria-label={decision === "reject" ? t("Причина") : t("Комментарий")} maxLength={1000}
                     value={reason} aria-invalid={touched && decision === "reject" && (reasonLen < 3)} onChange={e => setReason(e.target.value)}/>
                 </label>
               )}
               {touched && formError && <p className="error-msg" role="alert">{formError}</p>}
               <div className="doc-actions" style={{ marginTop: 10 }}>
-                {editing && <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => { setEditing(false); setTouched(false); }}>Отмена</button>}
+                {editing && <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => { setEditing(false); setTouched(false); }}>{t("Отмена")}</button>}
                 <button className="btn btn-primary btn-sm" disabled={busy} aria-busy={busy} onClick={submitProposal}>
-                  <Send size={14}/> {busy ? "Отправляем…" : "Отправить администратору"}
+                  <Send size={14}/> {busy ? t("Отправляем…") : t("Отправить администратору")}
                 </button>
               </div>
             </div>
           )}
           {role === "partner" && proposal && !editing && !closed && (
-            <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => { setEditing(true); setDecision(proposal.decision); setProduct(proposal.recommended_product || ""); setReason(proposal.reason || ""); }}>
-              Изменить предложение
-            </button>
+            <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => { setEditing(true); setDecision(proposal.decision); setProduct(proposal.recommended_product || ""); setReason(proposal.reason || ""); }}>{t("Изменить предложение")}</button>
           )}
 
           {role === "admin" && !closed && !draft && (
             <div className="action-section">
-              <div className="action-label">РЕШЕНИЕ АДМИНИСТРАТОРА</div>
-              {!proposal && <p className="step-hint">Подтвердить можно после предложения специалиста. Отклонить можно в любой момент.</p>}
+              <div className="action-label">{t("Решение администратора")}</div>
+              {!proposal && <p className="step-hint">{t("Подтвердить можно после предложения специалиста. Отклонить можно в любой момент.")}</p>}
               {proposal && (
                 <button className="btn btn-success btn-sm" disabled={busy} style={{ marginBottom: 10 }}
                   onClick={() => askConfirm(proposal.decision === "approve" ? {
-                    title: "Подтвердить план специалиста?",
-                    body: `Заказ станет «${CONSULT_PRODUCTS[proposal.recommended_product || ""] || proposal.recommended_product}», этап «Документы». После решения клиенту откроется оплата. Затем назначьте ${proposal.recommended_product === "itin_return" ? "партнёра CAA/CPA" : "партнёра CAA или CAA/CPA"}.`,
-                    confirmLabel: "Подтвердить и открыть оплату",
-                    onConfirm: () => rpc("confirm_specialist_plan", { p_order: order.id, p_op: op("confirm") }, "План подтверждён: клиент видит продукт и оплату"),
+                    title: t("Подтвердить план специалиста?"),
+                    body: t("Заказ станет «{0}», этап «Документы». После решения клиенту откроется оплата. Затем назначьте {1}.", { 0: CONSULT_PRODUCTS[proposal.recommended_product || ""] || proposal.recommended_product, 1: proposal.recommended_product === "itin_return" ? t("партнёра CAA/CPA") : t("партнёра CAA или CAA/CPA") }),
+                    confirmLabel: t("Подтвердить и открыть оплату"),
+                    onConfirm: () => rpc("confirm_specialist_plan", { p_order: order.id, p_op: op("confirm") }, t("План подтверждён: клиент видит продукт и оплату")),
                   } : {
-                    title: "Подтвердить отказ?",
-                    body: `Клиент увидит отказ с причиной «${proposal.reason || ""}». Заказ будет закрыт, это необратимо.`,
-                    confirmLabel: "Подтвердить отказ", danger: true,
-                    onConfirm: () => rpc("confirm_specialist_plan", { p_order: order.id, p_op: op("confirm") }, "Отказ подтверждён, заказ закрыт"),
+                    title: t("Подтвердить отказ?"),
+                    body: t("Клиент увидит отказ с причиной «{0}». Заказ будет закрыт, это необратимо.", { 0: proposal.reason || "" }),
+                    confirmLabel: t("Подтвердить отказ"), danger: true,
+                    onConfirm: () => rpc("confirm_specialist_plan", { p_order: order.id, p_op: op("confirm") }, t("Отказ подтверждён, заказ закрыт")),
                   })}>
-                  <CheckCircle2 size={14}/> Подтвердить план
-                </button>
+                  <CheckCircle2 size={14}/>{t(" Подтвердить план")}</button>
               )}
               <label style={{ display: "block" }}>
-                <span className="step-hint">Отклонить самостоятельно: причина для клиента * (3–1000 символов)</span>
-                <textarea className="note-area" aria-label="Причина отказа" maxLength={1000} value={adminReason}
+                <span className="step-hint">{t("Отклонить самостоятельно: причина для клиента * (3–1000 символов)")}</span>
+                <textarea className="note-area" aria-label={t("Причина отказа")} maxLength={1000} value={adminReason}
                   aria-invalid={adminTouched && !!adminReasonError} onChange={e => setAdminReason(e.target.value)}/>
               </label>
               {adminTouched && adminReasonError && <p className="error-msg" role="alert">{adminReasonError}</p>}
@@ -279,18 +272,17 @@ export function ConsultPanel({
                   setAdminTouched(true);
                   if (adminReasonError) return;
                   askConfirm({
-                    title: "Отклонить консультацию?",
-                    body: `Клиент увидит отказ с причиной «${adminReason.trim()}». Заказ будет закрыт, это необратимо.`,
-                    confirmLabel: "Отклонить", danger: true,
-                    onConfirm: () => rpc("reject_specialist_plan", { p_order: order.id, p_reason: adminReason.trim(), p_op: op("reject") }, "Консультация отклонена, заказ закрыт"),
+                    title: t("Отклонить консультацию?"),
+                    body: t("Клиент увидит отказ с причиной «{0}». Заказ будет закрыт, это необратимо.", { 0: adminReason.trim() }),
+                    confirmLabel: t("Отклонить"), danger: true,
+                    onConfirm: () => rpc("reject_specialist_plan", { p_order: order.id, p_reason: adminReason.trim(), p_op: op("reject") }, t("Консультация отклонена, заказ закрыт")),
                   });
                 }}>
-                <XCircle size={14}/> Отклонить
-              </button>
+                <XCircle size={14}/>{t(" Отклонить")}</button>
             </div>
           )}
 
-          {closed && <p className="step-hint"><MessageCircle size={14} style={{ verticalAlign: -2 }}/> Консультация завершена, действий нет.</p>}
+          {closed && <p className="step-hint"><MessageCircle size={14} style={{ verticalAlign: -2 }}/>{t(" Консультация завершена, действий нет.")}</p>}
         </div>
       </div>
     </>
