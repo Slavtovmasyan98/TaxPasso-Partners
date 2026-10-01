@@ -10,6 +10,7 @@ import "./styles.css";
 import { t, tr, locale, useLang, LangSwitch } from "./i18n";
 import { OrderLedgerEntry, ReviewState, AdminFinance } from "./components/OrderPresentation";
 import { ConsultPanel, CONSULT_ERRORS, type SpecialistProposal } from "./Consult";
+import { ItinW7, type ItinApplication } from "./ItinW7";
 import { ProductPrices, RenewalPrices, PaymentLines, dueBreakdown, moneyErrorMessage, usd, type PaymentDue, type ProductPrice, type RenewalPrice, type PaymentLine } from "./Money";
 
 const sb = createClient(
@@ -471,6 +472,7 @@ function App() {
   const [itinEntry, setItinEntry] = useState("");
   const [itinAssignedOn, setItinAssignedOn] = useState("");
   const [irsEvents, setIrsEvents] = useState<IrsEvent[]>([]);
+  const [itinApp, setItinApp] = useState<ItinApplication|null>(null);
   const [showClosed, setShowClosed] = useState(false);
   const [allCompanies, setAllCompanies] = useState<Company[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -615,10 +617,12 @@ function App() {
     setClientDocs(c.data||[]);
     setDocumentReviewProposals(reviewProposals.data||[]);
     setPartnerDocs(p.data||[]);
-    const [{ data: ir }, { data: events }] = await Promise.all([
+    const [{ data: ir }, { data: events }, { data: w7 }] = await Promise.all([
       sb.from("order_itin").select("*").eq("order_id",orderId).maybeSingle(),
       sb.from("itin_irs_events").select("*").eq("order_id",orderId).order("created_at",{ascending:false}),
+      sb.from("itin_applications").select("*").eq("order_id",orderId).maybeSingle(),
     ]);
+    setItinApp((w7 as ItinApplication)||null);
     setItinRecord(ir||null);
     setItinEntry(ir?.itin||"");
     setItinAssignedOn(ir?.assigned_on||"");
@@ -683,6 +687,8 @@ function App() {
         "Too many attempts":t("Превышено число попыток подачи"),
         "Document replaced":t("Документ уже заменён клиентом"),
         "No proposal":t("Предложение уже обработано — обновите страницу"),
+        "ITIN application required":t("Клиент ещё не отправил анкету ITIN (W-7)"),
+        "Application not submitted":t("Анкета ещё не отправлена клиентом"),
         ...CONSULT_ERRORS,
       };
       toast("error", messages[error.message] || (error.message==="Payment required" ? (role==="partner"?t("Заказ ещё не передан в работу"):t("Сначала нужна оплата")) :
@@ -1279,6 +1285,18 @@ function App() {
                   </div>
                 </div>
 
+                {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&selected.eligibility==="approved"&&(
+                  <ItinW7 app={itinApp} role={role as "admin"|"partner"} busy={busy}
+                    onReturn={()=>{
+                      const note=prompt(t("Что исправить в анкете? Клиент увидит этот комментарий."));
+                      if(note?.trim()) setConfirm({
+                        title:t("Вернуть анкету клиенту?"),
+                        body:t("Клиент увидит комментарий: «{0}». Этап после «Документы» закроется, пока клиент не отправит анкету снова.", { 0: note.trim() }),
+                        confirmLabel:t("Вернуть"),danger:true,
+                        onConfirm:()=>rpc("return_itin_application",{p_order:selected.id,p_note:note.trim()},t("Анкета возвращена клиенту"))
+                      });
+                    }}/>
+                )}
                 {(selected.product.startsWith("itin")||selected.product.startsWith("bundle"))&&(
                   <div className="card" style={{marginBottom:18}}>
                     <h2>{t("Номер ITIN")}</h2>
